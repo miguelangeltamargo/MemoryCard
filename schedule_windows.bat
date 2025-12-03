@@ -11,20 +11,15 @@ REM Get the current directory
 set SCRIPT_DIR=%~dp0
 set PYTHON_SCRIPT=%SCRIPT_DIR%game_save_sync.py
 
-REM Find Python executable
-where python >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    set PYTHON_PATH=python
-) else (
-    where python3 >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        set PYTHON_PATH=python3
-    ) else (
-        echo Error: Python not found in PATH
-        echo Please install Python and make sure it's added to PATH
-        pause
-        exit /b 1
-    )
+REM Set Python path to venv
+set PYTHON_PATH=%SCRIPT_DIR%venv\Scripts\python.exe
+
+REM Check if venv exists
+if not exist "%PYTHON_PATH%" (
+    echo Error: Virtual environment not found at %SCRIPT_DIR%venv
+    echo Please run 'python setup.py' first to create the virtual environment
+    pause
+    exit /b 1
 )
 
 echo Found Python: %PYTHON_PATH%

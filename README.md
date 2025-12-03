@@ -76,10 +76,13 @@ python setup.py
 ```
 
 The setup script will:
-1. Install required dependencies
-2. Create a default configuration file
-3. Guide you through setting up Google Drive credentials
-4. Test the connection
+1. Create a virtual environment (to avoid conflicts with system Python)
+2. Install required dependencies
+3. Create a default configuration file
+4. Guide you through setting up Google Drive credentials
+5. Test the connection
+
+**Note**: The script automatically creates a virtual environment to work around Python package management restrictions on macOS and modern Python installations.
 
 ### Step 4: Get Google Drive Credentials
 
@@ -96,13 +99,15 @@ When you run the setup script, it will guide you through this process. Here's wh
 
 ### Step 5: First Run
 
-After setup is complete, run the script:
+After setup is complete, activate the virtual environment and run the script:
 
 ```bash
 # macOS
-python3 game_save_sync.py --once
+source venv/bin/activate
+python game_save_sync.py --once
 
 # Windows
+venv\Scripts\activate
 python game_save_sync.py --once
 ```
 
@@ -110,23 +115,27 @@ On first run, a browser window will open asking you to authorize the app. This o
 
 ## Usage
 
-### Run Once (Manual Sync)
+**Important**: Always activate the virtual environment first before running the sync tool:
 
 ```bash
 # macOS
-python3 game_save_sync.py --once
+source venv/bin/activate
 
 # Windows
+venv\Scripts\activate
+```
+
+### Run Once (Manual Sync)
+
+```bash
+# After activating venv
 python game_save_sync.py --once
 ```
 
 ### Run Continuously (Recommended)
 
 ```bash
-# macOS
-python3 game_save_sync.py
-
-# Windows
+# After activating venv
 python game_save_sync.py
 ```
 

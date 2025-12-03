@@ -7,8 +7,15 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Path to the Python script
 PYTHON_SCRIPT="$SCRIPT_DIR/game_save_sync.py"
 
-# Get the Python executable path
-PYTHON_PATH=$(which python3)
+# Get the Python executable path from venv
+PYTHON_PATH="$SCRIPT_DIR/venv/bin/python"
+
+# Check if venv exists
+if [ ! -f "$PYTHON_PATH" ]; then
+    echo "Error: Virtual environment not found at $SCRIPT_DIR/venv"
+    echo "Please run 'python3 setup.py' first to create the virtual environment"
+    exit 1
+fi
 
 # LaunchAgent plist file path
 PLIST_NAME="com.gamesavesync.plist"

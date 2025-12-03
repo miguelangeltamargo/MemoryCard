@@ -9,6 +9,7 @@ import sys
 import json
 import subprocess
 from pathlib import Path
+import venv
 
 def print_header(text):
     """Print a formatted header."""
@@ -28,16 +29,90 @@ def check_python_version():
         sys.exit(1)
     print(f"✓ Python version: {sys.version.split()[0]}")
 
+def is_in_venv():
+    """Check if we're currently in a virtual environment."""
+    return hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+
+def get_venv_path():
+    """Get the path to the virtual environment directory."""
+    return Path("venv")
+
+def get_venv_python():
+    """Get the path to the Python executable in the venv."""
+    venv_path = get_venv_path()
+    if sys.platform == "win32":
+        return venv_path / "Scripts" / "python.exe"
+    else:
+        return venv_path / "bin" / "python"
+
+def create_venv():
+    """Create a virtual environment if it doesn't exist."""
+    venv_path = get_venv_path()
+
+    if venv_path.exists():
+        print("✓ Virtual environment already exists")
+        return True
+
+    print("Creating virtual environment...")
+    try:
+        venv.create(venv_path, with_pip=True)
+        print("✓ Virtual environment created successfully")
+        return True
+    except Exception as e:
+        print(f"✗ Error creating virtual environment: {e}")
+        return False
+
 def install_dependencies():
     """Install required Python packages."""
-    print("\nInstalling required packages...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-        print("✓ Dependencies installed successfully")
-        return True
-    except subprocess.CalledProcessError:
-        print("✗ Error installing dependencies")
-        return False
+    # Check if we're in a virtual environment
+    if not is_in_venv():
+        print("⚠ Not running in a virtual environment")
+
+        # Create venv if needed
+        venv_path = get_venv_path()
+        if not venv_path.exists():
+            if not create_venv():
+                return False
+
+        # Get the venv python executable
+        venv_python = get_venv_python()
+
+        print("\nInstalling required packages in virtual environment...")
+        try:
+            subprocess.check_call([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"])
+            subprocess.check_call([str(venv_python), "-m", "pip", "install", "-r", "requirements.txt"])
+            print("✓ Dependencies installed successfully")
+
+            # Print instructions for next steps
+            if sys.platform == "win32":
+                activate_cmd = "venv\\Scripts\\activate"
+            else:
+                activate_cmd = "source venv/bin/activate"
+
+            print(f"\n{'='*70}")
+            print("  IMPORTANT: Virtual Environment Created")
+            print(f"{'='*70}")
+            print(f"\nTo use the Game Save Sync tool, you need to activate the virtual")
+            print(f"environment first. Run:\n")
+            print(f"  {activate_cmd}")
+            print(f"\nThen you can run the sync tool:\n")
+            print(f"  python game_save_sync.py --once")
+            print(f"\n{'='*70}\n")
+
+            return True
+        except subprocess.CalledProcessError:
+            print("✗ Error installing dependencies")
+            return False
+    else:
+        # Already in venv, install normally
+        print("\nInstalling required packages...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+            print("✓ Dependencies installed successfully")
+            return True
+        except subprocess.CalledProcessError:
+            print("✗ Error installing dependencies")
+            return False
 
 def check_credentials_file():
     """Check if Google Drive credentials file exists."""
