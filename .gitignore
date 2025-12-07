@@ -2,8 +2,12 @@
 credentials.json
 token.pickle
 
-# Config file (may contain personal paths)
+# Config files (may contain personal paths)
 config.json
+sync_config.json
+
+# Private documentation
+ARCHITECTURE.md
 
 # Log files
 *.log

@@ -1,11 +1,45 @@
-# Game Save Sync
+# MemoryCard
 
-Automatically sync your game save files between Mac and PC using Google Drive. Never lose your progress when switching between devices!
+Cross-platform game save synchronization tool. Never lose your progress when switching between devices!
+
+## 🚀 Quick Start (Simple Version)
+
+**NEW**: Try the interactive sync tool - no Google API setup required!
+
+```bash
+python3 simple_sync.py
+```
+
+This interactive tool lets you:
+- Choose any game to sync
+- Specify local save folder and cloud backup location
+- Works with Google Drive Desktop, Dropbox, OneDrive, or any synced folder
+- No API credentials needed!
+
+## 📦 Tools Available
+
+### 1. `simple_sync.py` - Interactive CLI Tool
+Simple, user-friendly tool that works with any cloud storage you have installed (Google Drive Desktop, Dropbox, OneDrive, etc.). Just point it to your game saves and cloud folder - no API setup required.
+
+### 2. `game_save_sync.py` - Advanced Auto-Sync (requires Google API setup)
+Fully automated background sync service with Google Drive API integration, system tray support, and scheduling.
 
 ## Supported Games
 
+Currently configured for:
 - **Hollow Knight**
 - **Hollow Knight: Silksong**
+
+**Easy to add more games** - just specify the save folder location and file patterns!
+
+## 🔮 Future Plans
+
+This project is evolving into a comprehensive gaming platform:
+- Desktop app with GUI (Tauri + React)
+- Web platform for tracking game progress
+- Social features (share saves, achievements)
+- Multi-cloud support (S3, Dropbox, OneDrive)
+- Cross-device sync for unlimited games
 
 ## Features
 
