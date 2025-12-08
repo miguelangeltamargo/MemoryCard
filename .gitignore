@@ -8,6 +8,7 @@ sync_config.json
 
 # Private documentation
 ARCHITECTURE.md
+design/
 
 # Log files
 *.log
@@ -30,3 +31,12 @@ ENV/
 # Windows
 Thumbs.db
 desktop.ini
+
+# Node.js / JavaScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tauri build artifacts
+desktop-app/src-tauri/target/
+desktop-app/dist/
