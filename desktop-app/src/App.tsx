@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
 
 interface Game {
@@ -8,20 +9,81 @@ interface Game {
   name: string;
   localPath: string;
   cloudPath: string;
-  lastSynced?: Date;
+  lastSynced?: string;
   status: 'synced' | 'pending' | 'syncing';
+}
+
+interface AppSettings {
+  syncInterval: number; // in minutes
+  autoSync: boolean;
 }
 
 function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [showAddGame, setShowAddGame] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [newGame, setNewGame] = useState({
     name: '',
     localPath: '',
     cloudPath: ''
   });
+  const [settings, setSettings] = useState<AppSettings>({
+    syncInterval: 5,
+    autoSync: true
+  });
   const [syncing, setSyncing] = useState(false);
   const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | null>(null);
+  const [store, setStore] = useState<Store | null>(null);
+
+  // Initialize store and load data
+  useEffect(() => {
+    const initStore = async () => {
+      const s = await Store.load('store.json');
+      setStore(s);
+
+      // Load games
+      const savedGames = await s.get<Game[]>('games');
+      if (savedGames) {
+        setGames(savedGames);
+      }
+
+      // Load settings
+      const savedSettings = await s.get<AppSettings>('settings');
+      if (savedSettings) {
+        setSettings(savedSettings);
+      }
+    };
+
+    initStore();
+  }, []);
+
+  // Save games when they change
+  useEffect(() => {
+    if (store && games.length > 0) {
+      store.set('games', games);
+      store.save();
+    }
+  }, [games, store]);
+
+  // Save settings when they change
+  useEffect(() => {
+    if (store) {
+      store.set('settings', settings);
+      store.save();
+    }
+  }, [settings, store]);
+
+  // Automatic sync interval
+  useEffect(() => {
+    if (!settings.autoSync || games.length === 0) return;
+
+    const intervalMs = settings.syncInterval * 60 * 1000;
+    const intervalId = setInterval(() => {
+      handleSync();
+    }, intervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [settings.autoSync, settings.syncInterval, games]);
 
   const handleBrowseFolder = async (field: 'localPath' | 'cloudPath') => {
     setBrowsing(field);
@@ -80,7 +142,7 @@ function App() {
           // Update status to synced
           setGames(prev => prev.map(g =>
             g.id === game.id
-              ? { ...g, status: 'synced' as const, lastSynced: new Date() }
+              ? { ...g, status: 'synced' as const, lastSynced: new Date().toISOString() }
               : g
           ));
         } catch (error) {
@@ -135,7 +197,19 @@ function App() {
           >
             {syncing ? 'Syncing...' : 'Sync All'}
           </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowSettings(true)}
+          >
+            ⚙️ Settings
+          </button>
         </div>
+
+        {settings.autoSync && games.length > 0 && (
+          <div className="auto-sync-indicator">
+            🔄 Auto-sync enabled (every {settings.syncInterval} min)
+          </div>
+        )}
 
         {games.length === 0 && !showAddGame && (
           <div className="empty-state">
@@ -218,6 +292,52 @@ function App() {
           </div>
         )}
 
+        {showSettings && (
+          <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <h2>Settings</h2>
+
+              <div className="form-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.autoSync}
+                    onChange={(e) => setSettings({...settings, autoSync: e.target.checked})}
+                  />
+                  {' '}Enable Auto-Sync
+                </label>
+                <p className="setting-description">
+                  Automatically sync all games at regular intervals
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>Sync Interval (minutes)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={settings.syncInterval}
+                  onChange={(e) => setSettings({...settings, syncInterval: parseInt(e.target.value) || 5})}
+                  disabled={!settings.autoSync}
+                />
+                <p className="setting-description">
+                  How often to automatically sync (1-1440 minutes)
+                </p>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowSettings(false)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="games-grid">
           {games.map(game => (
             <div key={game.id} className="game-card">
@@ -243,7 +363,7 @@ function App() {
 
               {game.lastSynced && (
                 <div className="last-synced">
-                  Last synced: {game.lastSynced.toLocaleString()}
+                  Last synced: {new Date(game.lastSynced).toLocaleString()}
                 </div>
               )}
 
