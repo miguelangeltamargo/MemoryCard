@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "@tauri-apps/plugin-store";
+import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 interface Game {
@@ -16,6 +19,15 @@ interface Game {
 interface AppSettings {
   syncInterval: number; // in minutes
   autoSync: boolean;
+  cloudConfigPath?: string; // Path to store config in cloud
+  autoLaunch: boolean;
+  showNotifications: boolean;
+}
+
+interface SyncProgress {
+  current: number;
+  total: number;
+  fileName?: string;
 }
 
 function App() {
@@ -29,11 +41,15 @@ function App() {
   });
   const [settings, setSettings] = useState<AppSettings>({
     syncInterval: 5,
-    autoSync: true
+    autoSync: true,
+    autoLaunch: false,
+    showNotifications: true
   });
   const [syncing, setSyncing] = useState(false);
-  const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | 'cloudConfig' | null>(null);
   const [store, setStore] = useState<Store | null>(null);
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
   // Initialize store and load data
   useEffect(() => {
@@ -85,6 +101,80 @@ function App() {
     return () => clearInterval(intervalId);
   }, [settings.autoSync, settings.syncInterval, games]);
 
+  // Listen for tray sync events
+  useEffect(() => {
+    const unlisten = listen('tray-sync', () => {
+      handleSync();
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
+
+  // Request notification permissions
+  useEffect(() => {
+    const checkPermissions = async () => {
+      const granted = await isPermissionGranted();
+      if (!granted) {
+        await requestPermission();
+      }
+    };
+    checkPermissions();
+  }, []);
+
+  // Manage auto-launch
+  useEffect(() => {
+    const manageAutoLaunch = async () => {
+      const enabled = await isEnabled();
+      if (settings.autoLaunch && !enabled) {
+        await enable();
+      } else if (!settings.autoLaunch && enabled) {
+        await disable();
+      }
+    };
+    manageAutoLaunch();
+  }, [settings.autoLaunch]);
+
+  // Sync config to cloud
+  useEffect(() => {
+    const syncConfigToCloud = async () => {
+      if (!settings.cloudConfigPath || !store) return;
+
+      try {
+        const config = {
+          games,
+          settings
+        };
+
+        const configPath = `${settings.cloudConfigPath}/memorycard-config.json`;
+        await invoke('sync_config_to_cloud', {
+          configPath,
+          config: JSON.stringify(config, null, 2)
+        });
+      } catch (error) {
+        console.error('Failed to sync config to cloud:', error);
+      }
+    };
+
+    if (games.length > 0 || settings.cloudConfigPath) {
+      syncConfigToCloud();
+    }
+  }, [games, settings, store]);
+
+  // Show notifications
+  useEffect(() => {
+    if (notification && settings.showNotifications) {
+      sendNotification({
+        title: 'MemoryCard',
+        body: notification.message
+      });
+
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification, settings.showNotifications]);
+
   const handleBrowseFolder = async (field: 'localPath' | 'cloudPath') => {
     setBrowsing(field);
     try {
@@ -119,10 +209,21 @@ function App() {
 
   const handleSync = async (gameId?: string) => {
     setSyncing(true);
+    setSyncProgress(null);
+
     try {
       const gamesToSync = gameId ? games.filter(g => g.id === gameId) : games;
+      let totalGames = gamesToSync.length;
+      let currentGame = 0;
 
       for (const game of gamesToSync) {
+        currentGame++;
+        setSyncProgress({
+          current: currentGame,
+          total: totalGames,
+          fileName: game.name
+        });
+
         // Update status to syncing
         setGames(prev => prev.map(g =>
           g.id === game.id ? { ...g, status: 'syncing' as const } : g
@@ -145,17 +246,35 @@ function App() {
               ? { ...g, status: 'synced' as const, lastSynced: new Date().toISOString() }
               : g
           ));
+
+          if (result.files_synced > 0) {
+            setNotification({
+              message: `${game.name}: Synced ${result.files_synced} file(s)`,
+              type: 'success'
+            });
+          }
         } catch (error) {
           console.error(`Sync failed for ${game.name}:`, error);
           // Update status back to pending on error
           setGames(prev => prev.map(g =>
             g.id === game.id ? { ...g, status: 'pending' as const } : g
           ));
-          alert(`Failed to sync ${game.name}: ${error}`);
+          setNotification({
+            message: `Failed to sync ${game.name}`,
+            type: 'error'
+          });
         }
+      }
+
+      if (!gameId && totalGames > 1) {
+        setNotification({
+          message: `Synced all ${totalGames} games`,
+          type: 'success'
+        });
       }
     } finally {
       setSyncing(false);
+      setSyncProgress(null);
     }
   };
 
@@ -208,6 +327,26 @@ function App() {
         {settings.autoSync && games.length > 0 && (
           <div className="auto-sync-indicator">
             🔄 Auto-sync enabled (every {settings.syncInterval} min)
+          </div>
+        )}
+
+        {syncProgress && (
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{width: `${(syncProgress.current / syncProgress.total) * 100}%`}}
+              />
+            </div>
+            <div className="progress-text">
+              Syncing {syncProgress.fileName} ({syncProgress.current} of {syncProgress.total})
+            </div>
+          </div>
+        )}
+
+        {notification && (
+          <div className={`notification-toast ${notification.type}`}>
+            {notification.message}
           </div>
         )}
 
@@ -323,6 +462,71 @@ function App() {
                 />
                 <p className="setting-description">
                   How often to automatically sync (1-1440 minutes)
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.autoLaunch}
+                    onChange={(e) => setSettings({...settings, autoLaunch: e.target.checked})}
+                  />
+                  {' '}Launch on Startup
+                </label>
+                <p className="setting-description">
+                  Automatically start MemoryCard when you log in
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.showNotifications}
+                    onChange={(e) => setSettings({...settings, showNotifications: e.target.checked})}
+                  />
+                  {' '}Show Notifications
+                </label>
+                <p className="setting-description">
+                  Get notified when syncs complete
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>Cloud Config Folder (Optional)</label>
+                <div className="input-with-button">
+                  <input
+                    type="text"
+                    placeholder="~/Google Drive/MemoryCard"
+                    value={settings.cloudConfigPath || ''}
+                    onChange={(e) => setSettings({...settings, cloudConfigPath: e.target.value})}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-browse"
+                    onClick={async () => {
+                      setBrowsing('cloudConfig');
+                      try {
+                        const selected = await open({
+                          directory: true,
+                          multiple: false,
+                          title: 'Select Cloud Config Folder'
+                        });
+                        if (selected && typeof selected === 'string') {
+                          setSettings({...settings, cloudConfigPath: selected});
+                        }
+                      } finally {
+                        setBrowsing(null);
+                      }
+                    }}
+                    disabled={browsing !== null}
+                  >
+                    {browsing === 'cloudConfig' ? '...' : 'Browse'}
+                  </button>
+                </div>
+                <p className="setting-description">
+                  Sync your settings and game list to cloud storage
                 </p>
               </div>
 

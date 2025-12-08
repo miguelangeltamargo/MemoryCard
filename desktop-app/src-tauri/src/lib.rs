@@ -130,13 +130,81 @@ fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn sync_config_to_cloud(config_path: String, config: String) -> Result<(), String> {
+    let path = Path::new(&config_path);
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    // Write config file
+    fs::write(path, config).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+use tauri::{Manager, Emitter, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent}};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![greet, sync_game_saves])
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--flag", "minimized"])))
+        .setup(|app| {
+            // Create system tray menu
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let sync_i = MenuItem::with_id(app, "sync", "Sync Now", true, None::<&str>)?;
+
+            let menu = Menu::with_items(app, &[&show_i, &sync_i, &quit_i])?;
+
+            // Build tray icon
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    match event {
+                        TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } => {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "sync" => {
+                            // Emit sync event to frontend
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("tray-sync", ());
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![greet, sync_game_saves, sync_config_to_cloud])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
