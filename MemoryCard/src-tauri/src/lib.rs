@@ -442,9 +442,10 @@ pub fn run() {
                                     #[cfg(target_os = "macos")]
                                     {
                                         use cocoa::appkit::{NSApp, NSApplication};
+                                        use cocoa::base::YES;
                                         unsafe {
                                             let ns_app = NSApp();
-                                            ns_app.activateIgnoringOtherApps_(true);
+                                            ns_app.activateIgnoringOtherApps_(YES);
                                         }
                                     }
 
