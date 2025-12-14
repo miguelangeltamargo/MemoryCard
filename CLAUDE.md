@@ -19,14 +19,20 @@ This file provides guidance for Claude Code when working on the MemoryCard proje
 
 ```
 MemoryCard/
-├── desktop-app/           # Main Tauri application
+├── .github/workflows/     # CI/CD pipelines
+│   ├── test.yml           # Test workflow (frontend + backend)
+│   └── release.yml        # Release workflow
+├── MemoryCard/            # Main Tauri application
 │   ├── src/               # React frontend
 │   │   ├── App.tsx        # Main React component
-│   │   └── App.css        # Styles with theme support
+│   │   ├── App.test.tsx   # Frontend tests (Vitest)
+│   │   ├── App.css        # Styles with theme support
+│   │   └── test/setup.ts  # Test setup and mocks
 │   ├── src-tauri/         # Rust backend
-│   │   ├── src/lib.rs     # Tauri commands and app setup
+│   │   ├── src/lib.rs     # Tauri commands, app setup, and tests
 │   │   ├── Cargo.toml     # Rust dependencies
 │   │   └── tauri.conf.json # Tauri configuration
+│   ├── vitest.config.ts   # Vitest configuration
 │   └── package.json       # npm dependencies
 ├── design/
 │   └── ARCHITECTURE.md    # Full platform vision and roadmap
@@ -36,11 +42,20 @@ MemoryCard/
 ## Key Development Commands
 
 ```bash
-# From desktop-app directory:
+# From MemoryCard directory:
 npm run tauri dev        # Run in development mode
 npm run tauri build      # Build for production
 npm run build            # Build frontend only
 npm run dev              # Run Vite dev server only
+
+# Testing
+npm run test             # Run frontend tests in watch mode
+npm run test:run         # Run frontend tests once
+npm run test:coverage    # Run tests with coverage report
+
+# From MemoryCard/src-tauri directory:
+cargo test               # Run Rust backend tests
+cargo test --verbose     # Run with verbose output
 ```
 
 ## Architecture Details

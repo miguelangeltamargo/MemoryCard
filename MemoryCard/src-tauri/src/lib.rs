@@ -564,3 +564,413 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::thread;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    /// Helper to create a test file with content
+    fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let file_path = dir.join(name);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file_path
+    }
+
+    /// Helper to read file content
+    fn read_file_content(path: &Path) -> String {
+        fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn test_greet() {
+        let result = greet("World");
+        assert_eq!(result, "Hello, World! You've been greeted from Rust!");
+    }
+
+    #[test]
+    fn test_greet_with_empty_name() {
+        let result = greet("");
+        assert_eq!(result, "Hello, ! You've been greeted from Rust!");
+    }
+
+    #[test]
+    fn test_sync_game_saves_nonexistent_local_path() {
+        let result = sync_game_saves(
+            "/nonexistent/local/path".to_string(),
+            "/nonexistent/cloud/path".to_string(),
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Local path does not exist"));
+    }
+
+    #[test]
+    fn test_sync_game_saves_nonexistent_cloud_path() {
+        let local_dir = TempDir::new().unwrap();
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            "/nonexistent/cloud/path".to_string(),
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Cloud path does not exist"));
+    }
+
+    #[test]
+    fn test_sync_game_saves_empty_directories() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None,
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert_eq!(sync_result.files_synced, 0);
+        assert!(sync_result.conflicts.is_empty());
+    }
+
+    #[test]
+    fn test_sync_game_saves_local_to_cloud() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create a file only in local
+        create_test_file(local_dir.path(), "save.dat", "local save data");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None,
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert_eq!(sync_result.files_synced, 1);
+
+        // Verify file was copied to cloud
+        let cloud_file = cloud_dir.path().join("save.dat");
+        assert!(cloud_file.exists());
+        assert_eq!(read_file_content(&cloud_file), "local save data");
+    }
+
+    #[test]
+    fn test_sync_game_saves_cloud_to_local() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create a file only in cloud
+        create_test_file(cloud_dir.path(), "cloud_save.dat", "cloud save data");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None,
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert_eq!(sync_result.files_synced, 1);
+
+        // Verify file was copied to local
+        let local_file = local_dir.path().join("cloud_save.dat");
+        assert!(local_file.exists());
+        assert_eq!(read_file_content(&local_file), "cloud save data");
+    }
+
+    #[test]
+    fn test_sync_game_saves_bidirectional() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create different files in each directory
+        create_test_file(local_dir.path(), "local_only.dat", "local data");
+        create_test_file(cloud_dir.path(), "cloud_only.dat", "cloud data");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None,
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert_eq!(sync_result.files_synced, 2);
+
+        // Verify both files exist in both locations
+        assert!(local_dir.path().join("local_only.dat").exists());
+        assert!(local_dir.path().join("cloud_only.dat").exists());
+        assert!(cloud_dir.path().join("local_only.dat").exists());
+        assert!(cloud_dir.path().join("cloud_only.dat").exists());
+    }
+
+    #[test]
+    fn test_sync_game_saves_nested_directories() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create nested file structure in local
+        create_test_file(local_dir.path(), "saves/slot1/game.sav", "save slot 1");
+        create_test_file(local_dir.path(), "saves/slot2/game.sav", "save slot 2");
+        create_test_file(local_dir.path(), "config.ini", "config data");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None,
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert_eq!(sync_result.files_synced, 3);
+
+        // Verify nested structure was preserved
+        assert!(cloud_dir.path().join("saves/slot1/game.sav").exists());
+        assert!(cloud_dir.path().join("saves/slot2/game.sav").exists());
+        assert!(cloud_dir.path().join("config.ini").exists());
+    }
+
+    #[test]
+    fn test_sync_game_saves_conflict_detection() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create same file in both with different content
+        create_test_file(local_dir.path(), "save.dat", "local version");
+
+        // Wait a bit to ensure different timestamps
+        thread::sleep(Duration::from_millis(100));
+
+        create_test_file(cloud_dir.path(), "save.dat", "cloud version");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            None, // No auto-resolve
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(!sync_result.success); // Conflict means not fully successful
+        assert_eq!(sync_result.conflicts.len(), 1);
+        assert_eq!(sync_result.conflicts[0].relative_path, "save.dat");
+    }
+
+    #[test]
+    fn test_sync_game_saves_auto_resolve_local() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        create_test_file(local_dir.path(), "save.dat", "local version");
+        thread::sleep(Duration::from_millis(100));
+        create_test_file(cloud_dir.path(), "save.dat", "cloud version");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            Some("local".to_string()),
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+        assert!(sync_result.conflicts.is_empty());
+        assert_eq!(sync_result.files_synced, 1);
+
+        // Verify cloud now has local content
+        assert_eq!(
+            read_file_content(&cloud_dir.path().join("save.dat")),
+            "local version"
+        );
+    }
+
+    #[test]
+    fn test_sync_game_saves_auto_resolve_cloud() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        create_test_file(local_dir.path(), "save.dat", "local version");
+        thread::sleep(Duration::from_millis(100));
+        create_test_file(cloud_dir.path(), "save.dat", "cloud version");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            Some("cloud".to_string()),
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+
+        // Verify local now has cloud content
+        assert_eq!(
+            read_file_content(&local_dir.path().join("save.dat")),
+            "cloud version"
+        );
+    }
+
+    #[test]
+    fn test_sync_game_saves_auto_resolve_newer() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        // Create local file first (older)
+        create_test_file(local_dir.path(), "save.dat", "older local version");
+
+        // Wait and create cloud file (newer)
+        thread::sleep(Duration::from_millis(100));
+        create_test_file(cloud_dir.path(), "save.dat", "newer cloud version");
+
+        let result = sync_game_saves(
+            local_dir.path().to_string_lossy().to_string(),
+            cloud_dir.path().to_string_lossy().to_string(),
+            Some("newer".to_string()),
+        );
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(sync_result.success);
+
+        // Cloud is newer, so local should be updated
+        assert_eq!(
+            read_file_content(&local_dir.path().join("save.dat")),
+            "newer cloud version"
+        );
+    }
+
+    #[test]
+    fn test_resolve_conflict_use_local() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        let local_file = create_test_file(local_dir.path(), "save.dat", "local content");
+        let cloud_file = create_test_file(cloud_dir.path(), "save.dat", "cloud content");
+
+        let result = resolve_conflict(
+            local_file.to_string_lossy().to_string(),
+            cloud_file.to_string_lossy().to_string(),
+            true,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(read_file_content(&cloud_file), "local content");
+    }
+
+    #[test]
+    fn test_resolve_conflict_use_cloud() {
+        let local_dir = TempDir::new().unwrap();
+        let cloud_dir = TempDir::new().unwrap();
+
+        let local_file = create_test_file(local_dir.path(), "save.dat", "local content");
+        let cloud_file = create_test_file(cloud_dir.path(), "save.dat", "cloud content");
+
+        let result = resolve_conflict(
+            local_file.to_string_lossy().to_string(),
+            cloud_file.to_string_lossy().to_string(),
+            false,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(read_file_content(&local_file), "cloud content");
+    }
+
+    #[test]
+    fn test_sync_config_to_cloud() {
+        let cloud_dir = TempDir::new().unwrap();
+        let config_path = cloud_dir.path().join("memorycard/config.json");
+
+        let config = r#"{"games": [], "settings": {}}"#;
+
+        let result = sync_config_to_cloud(
+            config_path.to_string_lossy().to_string(),
+            config.to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert!(config_path.exists());
+        assert_eq!(read_file_content(&config_path), config);
+    }
+
+    #[test]
+    fn test_sync_config_to_cloud_creates_parent_dirs() {
+        let cloud_dir = TempDir::new().unwrap();
+        let config_path = cloud_dir.path().join("deeply/nested/dir/config.json");
+
+        let config = r#"{"test": true}"#;
+
+        let result = sync_config_to_cloud(
+            config_path.to_string_lossy().to_string(),
+            config.to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert!(config_path.exists());
+    }
+
+    #[test]
+    fn test_get_files_recursive() {
+        let dir = TempDir::new().unwrap();
+
+        create_test_file(dir.path(), "file1.txt", "content1");
+        create_test_file(dir.path(), "subdir/file2.txt", "content2");
+        create_test_file(dir.path(), "subdir/nested/file3.txt", "content3");
+
+        let files = get_files_recursive(dir.path()).unwrap();
+
+        assert_eq!(files.len(), 3);
+
+        let paths: Vec<String> = files
+            .iter()
+            .map(|f| f.path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(paths.contains(&"file1.txt".to_string()));
+        assert!(paths.contains(&"file2.txt".to_string()));
+        assert!(paths.contains(&"file3.txt".to_string()));
+    }
+
+    #[test]
+    fn test_get_files_recursive_empty_dir() {
+        let dir = TempDir::new().unwrap();
+        let files = get_files_recursive(dir.path()).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_copy_file() {
+        let dir = TempDir::new().unwrap();
+        let src = create_test_file(dir.path(), "source.txt", "source content");
+        let dst = dir.path().join("destination.txt");
+
+        let result = copy_file(&src, &dst);
+
+        assert!(result.is_ok());
+        assert!(dst.exists());
+        assert_eq!(read_file_content(&dst), "source content");
+    }
+
+    #[test]
+    fn test_open_folder_in_explorer_nonexistent() {
+        let result = open_folder_in_explorer("/nonexistent/path".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+}
