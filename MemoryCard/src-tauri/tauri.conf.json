@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MemoryCard",
-  "version": "0.3.0",
+  "version": "0.4.5",
   "identifier": "com.miguel.memorycard",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,7 +14,13 @@
       {
         "title": "MemoryCard",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "minWidth": 400,
+        "minHeight": 500,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false,
+        "visible": true
       }
     ],
     "security": {
@@ -30,6 +36,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    }
   }
 }
