@@ -4,6 +4,13 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+struct SaveLocationSuggestion {
+    path: String,
+    exists: bool,
+    source: String, // "known_game", "common_pattern", "search"
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct SyncResult {
     success: bool,
     message: String,
@@ -344,7 +351,7 @@ fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<Stri
         };
 
         // Use both Tauri API and native cocoa API for immediate effect
-        app.set_activation_policy(policy);
+        let _ = app.set_activation_policy(policy);
 
         // Also set via native API for immediate effect
         unsafe {
@@ -379,7 +386,181 @@ fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-use tauri::{Manager, Emitter, menu::{Menu, MenuItem, Submenu}, tray::{TrayIconBuilder, TrayIconEvent}};
+/// Searches for game save locations by scanning common directories for matching folder names.
+/// This is a filesystem-based search, not AI. For better results, consider integrating with
+/// PCGamingWiki API or a cloud-based game database service.
+#[tauri::command]
+fn find_save_locations(game_name: String) -> Result<Vec<SaveLocationSuggestion>, String> {
+    let mut suggestions = Vec::new();
+    let game_variants = generate_name_variants(&game_name);
+
+    // Get home directory
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+
+    // Search common save location directories per OS
+    #[cfg(target_os = "macos")]
+    {
+        let search_paths = vec![
+            (home.join("Library/Application Support"), 2),
+            (home.join("Library/Application Support/unity3d"), 2),
+            (home.join("Library/Containers"), 2),
+            (home.join("Library/Preferences"), 1),
+            (home.join("Library/Saved Games"), 2),
+            (home.join("Documents"), 1),
+        ];
+
+        for (base_path, depth) in search_paths {
+            if base_path.exists() {
+                search_directory_for_game(&base_path, &game_variants, &mut suggestions, depth);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut search_paths = Vec::new();
+
+        if let Some(appdata) = dirs::data_dir() {
+            search_paths.push((appdata, 2));
+        }
+        if let Some(appdata_local) = dirs::data_local_dir() {
+            search_paths.push((appdata_local, 2));
+        }
+        if let Some(docs) = dirs::document_dir() {
+            search_paths.push((docs.join("My Games"), 2));
+            search_paths.push((docs.clone(), 1));
+        }
+        search_paths.push((home.join("Saved Games"), 2));
+        search_paths.push((home.join("AppData/LocalLow"), 2));
+
+        for (base_path, depth) in search_paths {
+            if base_path.exists() {
+                search_directory_for_game(&base_path, &game_variants, &mut suggestions, depth);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let search_paths = vec![
+            (home.join(".local/share"), 2),
+            (home.join(".config"), 2),
+            (home.clone(), 1), // Check for dot-prefixed folders in home
+        ];
+
+        for (base_path, depth) in search_paths {
+            if base_path.exists() {
+                search_directory_for_game(&base_path, &game_variants, &mut suggestions, depth);
+            }
+        }
+    }
+
+    // Remove duplicates and sort by path
+    suggestions.sort_by(|a, b| a.path.cmp(&b.path));
+    suggestions.dedup_by(|a, b| a.path == b.path);
+
+    Ok(suggestions)
+}
+
+fn generate_name_variants(game_name: &str) -> Vec<String> {
+    let mut variants = Vec::new();
+    let name = game_name.trim();
+
+    // Original name
+    variants.push(name.to_string());
+
+    // Remove special characters
+    let clean: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ')
+        .collect();
+    if clean != name && !clean.is_empty() {
+        variants.push(clean);
+    }
+
+    // No spaces (camelCase style)
+    let no_spaces = name.replace(' ', "");
+    if !variants.contains(&no_spaces) {
+        variants.push(no_spaces);
+    }
+
+    // Underscores
+    let underscores = name.replace(' ', "_");
+    if !variants.contains(&underscores) {
+        variants.push(underscores);
+    }
+
+    // Lowercase variants
+    let lowercase = name.to_lowercase();
+    if !variants.contains(&lowercase) {
+        variants.push(lowercase.clone());
+    }
+
+    let lowercase_no_spaces = lowercase.replace(' ', "");
+    if !variants.contains(&lowercase_no_spaces) {
+        variants.push(lowercase_no_spaces.clone());
+    }
+
+    // Dot-prefixed for Linux hidden folders
+    let dot_prefixed = format!(".{}", lowercase_no_spaces);
+    if !variants.contains(&dot_prefixed) {
+        variants.push(dot_prefixed);
+    }
+
+    variants
+}
+
+fn search_directory_for_game(
+    base: &Path,
+    variants: &[String],
+    suggestions: &mut Vec<SaveLocationSuggestion>,
+    max_depth: usize,
+) {
+    if max_depth == 0 {
+        return;
+    }
+
+    let entries = match fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let folder_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        // Check if folder name matches any variant
+        for variant in variants {
+            let variant_lower = variant.to_lowercase();
+            if folder_name.contains(&variant_lower) || variant_lower.contains(&folder_name) {
+                suggestions.push(SaveLocationSuggestion {
+                    path: path.to_string_lossy().to_string(),
+                    exists: true,
+                    source: "filesystem_search".to_string(),
+                });
+                break;
+            }
+        }
+
+        // Recurse into subdirectories
+        if max_depth > 1 {
+            search_directory_for_game(&path, variants, suggestions, max_depth - 1);
+        }
+    }
+}
+
+use tauri::{
+    menu::{Menu, MenuItem, Submenu},
+    tray::{TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -389,6 +570,8 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--flag", "minimized"])))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Create app menu with Preferences
             #[cfg(target_os = "macos")]
@@ -539,7 +722,10 @@ pub fn run() {
                                     if let Some(visibility) = settings.get("dockVisibility") {
                                         if let Some(v) = visibility.as_str() {
                                             dock_visibility = v.to_string();
-                                            println!("Loaded dock visibility setting: {}", dock_visibility);
+                                            println!(
+                                                "Loaded dock visibility setting: {}",
+                                                dock_visibility
+                                            );
                                         }
                                     }
                                 }
@@ -555,12 +741,22 @@ pub fn run() {
 
                 println!("Setting activation policy based on: {}", dock_visibility);
                 // Use app.set_activation_policy directly (Tauri v2 API)
-                app.set_activation_policy(policy);
+                let _ = app.set_activation_policy(policy);
             }
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, sync_game_saves, sync_config_to_cloud, resolve_conflict, set_dock_visibility, open_folder_in_explorer, launch_cloud_app, restart_app])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            sync_game_saves,
+            sync_config_to_cloud,
+            resolve_conflict,
+            set_dock_visibility,
+            open_folder_in_explorer,
+            launch_cloud_app,
+            restart_app,
+            find_save_locations
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

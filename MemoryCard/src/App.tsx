@@ -5,6 +5,8 @@ import { Store } from "@tauri-apps/plugin-store";
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { enable, isEnabled, disable } from "@tauri-apps/plugin-autostart";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 interface Game {
@@ -22,9 +24,10 @@ interface AppSettings {
   cloudConfigPath?: string; // Path to store config in cloud
   autoLaunch: boolean;
   showNotifications: boolean;
+  confirmBeforeSync: boolean; // Show warning before syncing
   conflictResolution: 'manual' | 'local' | 'cloud' | 'newer';
   dockVisibility: 'menu-bar-only' | 'dock-only' | 'both' | 'neither';
-  theme: 'default' | 'cream' | 'midnight' | 'violet' | 'sunset' | 'ember';
+  theme: 'default' | 'cream' | 'midnight' | 'violet' | 'sunset' | 'ember' | 'forest' | 'ocean';
   cloudProvider: 'google-drive' | 'dropbox' | 'onedrive' | 'icloud' | 'other';
 }
 
@@ -56,21 +59,82 @@ function App() {
   const [showAddGame, setShowAddGame] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [newGame, setNewGame] = useState({
     name: '',
     localPath: '',
     cloudPath: ''
   });
+  const [syncingGameId, setSyncingGameId] = useState<string | null>(null);
+  const [saveLocationSuggestions, setSaveLocationSuggestions] = useState<Array<{path: string, exists: boolean, source: string}>>([]);
+  const [searchingSaveLocations, setSearchingSaveLocations] = useState(false);
+
+  // Auto-search for save locations and auto-fill cloud path when game name changes (debounced)
+  useEffect(() => {
+    if (!newGame.name || newGame.name.length < 2) {
+      setSaveLocationSuggestions([]);
+      return;
+    }
+
+    const searchTimer = setTimeout(async () => {
+      setSearchingSaveLocations(true);
+      try {
+        const suggestions = await invoke<Array<{path: string, exists: boolean, source: string}>>(
+          'find_save_locations',
+          { gameName: newGame.name }
+        );
+        setSaveLocationSuggestions(suggestions);
+
+        // Auto-fill local path if we found exactly one match
+        if (suggestions.length === 1 && !newGame.localPath) {
+          setNewGame(prev => ({ ...prev, localPath: suggestions[0].path }));
+        }
+      } catch (error) {
+        console.error('Save location search failed:', error);
+      } finally {
+        setSearchingSaveLocations(false);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(searchTimer);
+  }, [newGame.name]);
+
+  // Auto-fill cloud path when game name changes (if we have a cloud config path)
+  useEffect(() => {
+    if (!newGame.name || newGame.name.length < 2 || newGame.cloudPath) {
+      return;
+    }
+
+    // Use existing cloud config path, or find from existing games
+    let basePath = settings.cloudConfigPath;
+    if (!basePath && games.length > 0) {
+      // Try to extract base path from existing game cloud paths
+      const existingPath = games[0].cloudPath;
+      const lastSlash = existingPath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        basePath = existingPath.substring(0, lastSlash);
+      }
+    }
+
+    if (basePath) {
+      const safeName = newGame.name.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
+      setNewGame(prev => ({ ...prev, cloudPath: `${basePath}/${safeName}` }));
+    }
+  }, [newGame.name, settings.cloudConfigPath, games]);
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState<{version: string, notes?: string} | null>(null);
   const [settings, setSettings] = useState<AppSettings>({
     syncInterval: 5,
     autoSync: true,
     autoLaunch: false,
     showNotifications: true,
+    confirmBeforeSync: false,
     conflictResolution: 'manual',
     dockVisibility: 'both',
     theme: 'default',
     cloudProvider: 'google-drive'
   });
+  const [pendingSyncGameId, setPendingSyncGameId] = useState<string | null>(null); // For sync confirmation
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | 'cloudConfig' | null>(null);
@@ -208,6 +272,64 @@ function App() {
     }
   }, [settings.theme]);
 
+  // Check for updates on startup
+  useEffect(() => {
+    const checkForUpdates = async () => {
+      try {
+        const update = await check();
+        if (update) {
+          setUpdateAvailable({
+            version: update.version,
+            notes: update.body || undefined
+          });
+        }
+      } catch (error) {
+        console.log('Update check failed (this is normal in development):', error);
+      }
+    };
+
+    // Check for updates after a short delay to not block startup
+    const timer = setTimeout(checkForUpdates, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Function to manually check for updates
+  const handleCheckForUpdates = async () => {
+    setCheckingForUpdates(true);
+    try {
+      const update = await check();
+      if (update) {
+        setUpdateAvailable({
+          version: update.version,
+          notes: update.body || undefined
+        });
+      } else {
+        setNotification({ message: 'You are running the latest version', type: 'success' });
+      }
+    } catch (error) {
+      console.error('Update check failed:', error);
+      setNotification({ message: 'Failed to check for updates', type: 'error' });
+    } finally {
+      setCheckingForUpdates(false);
+    }
+  };
+
+  // Function to download and install update
+  const handleInstallUpdate = async () => {
+    try {
+      const update = await check();
+      if (update) {
+        setNotification({ message: 'Downloading update...', type: 'success' });
+        await update.downloadAndInstall();
+        setNotification({ message: 'Update installed! Restarting...', type: 'success' });
+        await relaunch();
+      }
+    } catch (error) {
+      console.error('Update install failed:', error);
+      setNotification({ message: `Update failed: ${error}`, type: 'error' });
+    }
+  };
+
   // Sync config to cloud
   useEffect(() => {
     const syncConfigToCloud = async () => {
@@ -259,6 +381,10 @@ function App() {
       if (selected && typeof selected === 'string') {
         setNewGame({ ...newGame, [field]: selected });
       }
+      // If selected is null/undefined, user cancelled - that's fine
+    } catch (error) {
+      // User cancelled or dialog failed - reset state
+      console.log('Browse dialog cancelled or failed:', error);
     } finally {
       setBrowsing(null);
     }
@@ -279,22 +405,41 @@ function App() {
     }
   };
 
+  // Request sync - checks if confirmation is needed
+  const requestSync = (gameId?: string) => {
+    if (settings.confirmBeforeSync) {
+      setPendingSyncGameId(gameId || 'all');
+    } else {
+      handleSync(gameId);
+    }
+  };
+
+  // Confirmed sync execution
   const handleSync = async (gameId?: string) => {
-    setSyncing(true);
+    // For single game sync, use syncingGameId to prevent flicker
+    if (gameId) {
+      setSyncingGameId(gameId);
+    } else {
+      setSyncing(true);
+    }
     setSyncProgress(null);
 
     try {
       const gamesToSync = gameId ? games.filter(g => g.id === gameId) : games;
       let totalGames = gamesToSync.length;
       let currentGame = 0;
+      let syncedCount = 0;
+      let filesChanged = 0;
 
       for (const game of gamesToSync) {
         currentGame++;
-        setSyncProgress({
-          current: currentGame,
-          total: totalGames,
-          fileName: game.name
-        });
+        if (!gameId) {
+          setSyncProgress({
+            current: currentGame,
+            total: totalGames,
+            fileName: game.name
+          });
+        }
 
         // Update status to syncing
         setGames(prev => prev.map(g =>
@@ -317,6 +462,7 @@ function App() {
           if (result.conflicts && result.conflicts.length > 0) {
             // Stop syncing other games and show conflict modal
             setSyncing(false);
+            setSyncingGameId(null);
             setSyncProgress(null);
             setConflicts({
               gameId: game.id,
@@ -337,9 +483,15 @@ function App() {
               : g
           ));
 
-          if (result.files_synced > 0) {
+          syncedCount++;
+          filesChanged += result.files_synced;
+
+          // For single game sync, show notification immediately
+          if (gameId) {
             setNotification({
-              message: `${game.name}: Synced ${result.files_synced} file(s)`,
+              message: result.files_synced > 0
+                ? `${game.name}: Synced ${result.files_synced} file(s)`
+                : `${game.name}: Already up to date`,
               type: 'success'
             });
           }
@@ -350,20 +502,24 @@ function App() {
             g.id === game.id ? { ...g, status: 'pending' as const } : g
           ));
           setNotification({
-            message: `Failed to sync ${game.name}`,
+            message: `Failed to sync ${game.name}: ${error}`,
             type: 'error'
           });
         }
       }
 
-      if (!gameId && totalGames > 1) {
+      // For bulk sync, show summary notification
+      if (!gameId && totalGames > 0) {
         setNotification({
-          message: `Synced all ${totalGames} games`,
+          message: filesChanged > 0
+            ? `Synced ${syncedCount} game(s), ${filesChanged} file(s) updated`
+            : `All ${syncedCount} game(s) up to date`,
           type: 'success'
         });
       }
     } finally {
       setSyncing(false);
+      setSyncingGameId(null);
       setSyncProgress(null);
     }
   };
@@ -411,17 +567,33 @@ function App() {
       if (e.key === 'Escape') {
         if (conflicts) {
           setConflicts(null);
+        } else if (selectedGame) {
+          setSelectedGame(null);
         } else if (showSettings) {
           setShowSettings(false);
         } else if (showAddGame) {
           setShowAddGame(false);
+        } else if (showAbout) {
+          setShowAbout(false);
         }
       }
     };
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [showAddGame, showSettings, conflicts]);
+  }, [showAddGame, showSettings, conflicts, selectedGame, showAbout]);
+
+  // Helper function to open folder in explorer
+  const openInExplorer = async (path: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    try {
+      await invoke('open_folder_in_explorer', { path });
+    } catch (error) {
+      setNotification({ message: `Failed to open folder: ${error}`, type: 'error' });
+    }
+  };
 
   return (
     <div className="app">
@@ -440,7 +612,7 @@ function App() {
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => handleSync()}
+            onClick={() => requestSync()}
             disabled={syncing || games.length === 0}
           >
             {syncing ? 'Syncing...' : 'Sync All'}
@@ -537,7 +709,10 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Local Save Folder</label>
+                <label>
+                  Local Save Folder
+                  {searchingSaveLocations && <span className="search-indicator"> (searching...)</span>}
+                </label>
                 <div className="input-with-button">
                   <input
                     type="text"
@@ -554,6 +729,25 @@ function App() {
                     {browsing === 'localPath' ? '...' : 'Browse'}
                   </button>
                 </div>
+                {saveLocationSuggestions.length > 0 && !newGame.localPath && (
+                  <div className="save-suggestions">
+                    <p className="suggestion-header">Found {saveLocationSuggestions.length} possible location(s):</p>
+                    {saveLocationSuggestions.slice(0, 5).map((suggestion, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="suggestion-item exists"
+                        onClick={() => {
+                          setNewGame({...newGame, localPath: suggestion.path});
+                        }}
+                        title={`Click to use this path`}
+                      >
+                        <span className="suggestion-path">{suggestion.path}</span>
+                        <span className="suggestion-badge">Select</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="form-group">
@@ -561,7 +755,9 @@ function App() {
                 <div className="input-with-button">
                   <input
                     type="text"
-                    placeholder="~/Google Drive/GameSaves/GameName"
+                    placeholder={settings.cloudConfigPath
+                      ? `${settings.cloudConfigPath}/GameName`
+                      : "~/Google Drive/GameSaves/GameName"}
                     value={newGame.cloudPath}
                     onChange={(e) => setNewGame({...newGame, cloudPath: e.target.value})}
                   />
@@ -574,6 +770,18 @@ function App() {
                     {browsing === 'cloudPath' ? '...' : 'Browse'}
                   </button>
                 </div>
+                {settings.cloudConfigPath && !newGame.cloudPath && newGame.name && (
+                  <button
+                    type="button"
+                    className="btn-link auto-fill-link"
+                    onClick={() => {
+                      const safeName = newGame.name.replace(/[^a-zA-Z0-9]/g, '_');
+                      setNewGame({...newGame, cloudPath: `${settings.cloudConfigPath}/${safeName}`});
+                    }}
+                  >
+                    Auto-fill: {settings.cloudConfigPath}/{newGame.name.replace(/[^a-zA-Z0-9]/g, '_')}
+                  </button>
+                )}
               </div>
               </div>
 
@@ -714,11 +922,59 @@ function App() {
                         Select your cloud storage provider to quickly launch it
                       </p>
                     </div>
+
+                    <div className="form-group update-section">
+                      <label>Software Updates</label>
+                      <div className="input-with-button">
+                        <span className="version-info">Current version: 0.4.5</span>
+                        <button
+                          type="button"
+                          className="btn btn-browse"
+                          onClick={handleCheckForUpdates}
+                          disabled={checkingForUpdates}
+                        >
+                          {checkingForUpdates ? 'Checking...' : 'Check for Updates'}
+                        </button>
+                      </div>
+                      {updateAvailable && (
+                        <div className="update-available">
+                          <p className="update-message">
+                            Version {updateAvailable.version} is available!
+                          </p>
+                          {updateAvailable.notes && (
+                            <p className="update-notes">{updateAvailable.notes}</p>
+                          )}
+                          <button
+                            className="btn btn-primary"
+                            onClick={handleInstallUpdate}
+                          >
+                            Download and Install
+                          </button>
+                        </div>
+                      )}
+                      <p className="setting-description">
+                        MemoryCard will automatically check for updates on startup
+                      </p>
+                    </div>
                   </>
                 )}
 
                 {settingsTab === 'sync' && (
                   <>
+                    <div className="form-group">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={settings.confirmBeforeSync}
+                          onChange={(e) => setSettings({...settings, confirmBeforeSync: e.target.checked})}
+                        />
+                        {' '}Confirm Before Sync
+                      </label>
+                      <p className="setting-description">
+                        Show a warning before syncing to prevent accidental overwrites
+                      </p>
+                    </div>
+
                     <div className="form-group">
                       <label>Conflict Resolution Strategy</label>
                       <select
@@ -780,7 +1036,7 @@ function App() {
                       <label>Color Theme</label>
                       <select
                         value={settings.theme}
-                        onChange={(e) => setSettings({...settings, theme: e.target.value as 'default' | 'cream' | 'midnight' | 'violet' | 'sunset' | 'ember'})}
+                        onChange={(e) => setSettings({...settings, theme: e.target.value as AppSettings['theme']})}
                       >
                         <option value="default">Default (Balanced)</option>
                         <option value="cream">Cream (Light & Warm)</option>
@@ -788,6 +1044,8 @@ function App() {
                         <option value="violet">Violet (Purple-Blue)</option>
                         <option value="sunset">Sunset (Orange Warmth)</option>
                         <option value="ember">Ember (Deep Rust)</option>
+                        <option value="forest">Forest (Deep Greens)</option>
+                        <option value="ocean">Ocean (Deep Blues)</option>
                       </select>
                       <p className="setting-description">
                         Choose your preferred color scheme based on the MemoryCard palette
@@ -876,9 +1134,11 @@ function App() {
                     <div className="conflict-file-details">
                       <span className="conflict-detail">
                         <strong>Local:</strong> {(conflict.local_size / 1024).toFixed(1)} KB
+                        {conflict.local_modified && ` • ${new Date(conflict.local_modified).toLocaleString()}`}
                       </span>
                       <span className="conflict-detail">
                         <strong>Cloud:</strong> {(conflict.cloud_size / 1024).toFixed(1)} KB
+                        {conflict.cloud_modified && ` • ${new Date(conflict.cloud_modified).toLocaleString()}`}
                       </span>
                     </div>
                   </div>
@@ -918,7 +1178,11 @@ function App() {
 
         <div className="games-grid">
           {games.map(game => (
-            <div key={game.id} className="game-card">
+            <div
+              key={game.id}
+              className="game-card"
+              onClick={() => setSelectedGame(game)}
+            >
               <div className="game-header">
                 <h3>{game.name}</h3>
                 <span className={`status status-${game.status}`}>
@@ -931,11 +1195,23 @@ function App() {
               <div className="game-paths">
                 <div className="path-info">
                   <span className="path-label">Local:</span>
-                  <span className="path-value">{game.localPath}</span>
+                  <span
+                    className="path-value path-clickable"
+                    onClick={(e) => openInExplorer(game.localPath, e)}
+                    title="Click to open in file explorer"
+                  >
+                    {game.localPath}
+                  </span>
                 </div>
                 <div className="path-info">
                   <span className="path-label">Cloud:</span>
-                  <span className="path-value">{game.cloudPath}</span>
+                  <span
+                    className="path-value path-clickable"
+                    onClick={(e) => openInExplorer(game.cloudPath, e)}
+                    title="Click to open in file explorer"
+                  >
+                    {game.cloudPath}
+                  </span>
                 </div>
               </div>
 
@@ -947,28 +1223,21 @@ function App() {
 
               <div className="game-actions">
                 <button
-                  className="btn btn-sm"
-                  onClick={() => handleSync(game.id)}
-                  disabled={syncing}
-                >
-                  Sync Now
-                </button>
-                <button
-                  className="btn btn-sm"
-                  onClick={async () => {
-                    try {
-                      await invoke('open_folder_in_explorer', { path: game.localPath });
-                    } catch (error) {
-                      setNotification({ message: `Failed to open folder: ${error}`, type: 'error' });
-                    }
+                  className={`btn btn-sm ${syncingGameId === game.id ? 'btn-syncing' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestSync(game.id);
                   }}
-                  title="Open local save folder"
+                  disabled={syncing || syncingGameId !== null}
                 >
-                  View
+                  {syncingGameId === game.id ? 'Syncing...' : 'Sync Now'}
                 </button>
                 <button
                   className="btn btn-sm btn-icon btn-danger"
-                  onClick={() => handleRemoveGame(game.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveGame(game.id);
+                  }}
                   title="Remove game"
                 >
                   ✕
@@ -977,6 +1246,128 @@ function App() {
             </div>
           ))}
         </div>
+
+        {selectedGame && (
+          <div className="modal-overlay" onClick={() => setSelectedGame(null)}>
+            <div className="modal game-detail-modal" onClick={(e) => e.stopPropagation()}>
+              <h2>{selectedGame.name}</h2>
+
+              <div className="game-detail-content">
+                <div className="detail-section">
+                  <h4>Sync Status</h4>
+                  <div className="detail-row">
+                    <span className={`status status-${selectedGame.status}`}>
+                      {selectedGame.status === 'synced' && '✓ Synced'}
+                      {selectedGame.status === 'pending' && '⏱ Pending'}
+                      {selectedGame.status === 'syncing' && '↻ Syncing'}
+                    </span>
+                  </div>
+                  {selectedGame.lastSynced && (
+                    <div className="detail-row">
+                      <span className="detail-label">Last synced:</span>
+                      <span className="detail-value">{new Date(selectedGame.lastSynced).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="detail-section">
+                  <h4>Save Locations</h4>
+                  <div className="detail-row">
+                    <span className="detail-label">Local:</span>
+                    <span
+                      className="detail-value detail-path"
+                      onClick={() => openInExplorer(selectedGame.localPath)}
+                      title="Click to open in file explorer"
+                    >
+                      {selectedGame.localPath}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Cloud:</span>
+                    <span
+                      className="detail-value detail-path"
+                      onClick={() => openInExplorer(selectedGame.cloudPath)}
+                      title="Click to open in file explorer"
+                    >
+                      {selectedGame.cloudPath}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="detail-section">
+                  <h4>Game ID</h4>
+                  <div className="detail-row">
+                    <span className="detail-value detail-id">{selectedGame.id}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    handleRemoveGame(selectedGame.id);
+                    setSelectedGame(null);
+                  }}
+                >
+                  Remove Game
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    requestSync(selectedGame.id);
+                    setSelectedGame(null);
+                  }}
+                  disabled={syncing || syncingGameId !== null}
+                >
+                  Sync Now
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedGame(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pendingSyncGameId && (
+          <div className="modal-overlay" onClick={() => setPendingSyncGameId(null)}>
+            <div className="modal conflict-modal" onClick={(e) => e.stopPropagation()}>
+              <h2>Confirm Sync</h2>
+              <p className="conflict-description">
+                {pendingSyncGameId === 'all'
+                  ? `You are about to sync all ${games.length} game(s). This may overwrite save files.`
+                  : `You are about to sync "${games.find(g => g.id === pendingSyncGameId)?.name}". This may overwrite save files.`
+                }
+              </p>
+              <p className="setting-description" style={{ marginBottom: '1rem' }}>
+                Based on your conflict resolution strategy ({settings.conflictResolution}),
+                files may be overwritten automatically.
+              </p>
+              <div className="conflict-buttons">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setPendingSyncGameId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const gameId = pendingSyncGameId === 'all' ? undefined : pendingSyncGameId;
+                    setPendingSyncGameId(null);
+                    handleSync(gameId);
+                  }}
+                >
+                  Sync Now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
