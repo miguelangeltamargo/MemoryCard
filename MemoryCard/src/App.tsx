@@ -55,6 +55,7 @@ interface SyncResult {
 }
 
 function App() {
+  // All state declarations first
   const [games, setGames] = useState<Game[]>([]);
   const [showAddGame, setShowAddGame] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -68,8 +69,29 @@ function App() {
   const [syncingGameId, setSyncingGameId] = useState<string | null>(null);
   const [saveLocationSuggestions, setSaveLocationSuggestions] = useState<Array<{path: string, exists: boolean, source: string}>>([]);
   const [searchingSaveLocations, setSearchingSaveLocations] = useState(false);
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState<{version: string, notes?: string} | null>(null);
+  const [settings, setSettings] = useState<AppSettings>({
+    syncInterval: 5,
+    autoSync: true,
+    autoLaunch: false,
+    showNotifications: true,
+    confirmBeforeSync: false,
+    conflictResolution: 'manual',
+    dockVisibility: 'both',
+    theme: 'default',
+    cloudProvider: 'google-drive'
+  });
+  const [pendingSyncGameId, setPendingSyncGameId] = useState<string | null>(null); // For sync confirmation
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | 'cloudConfig' | null>(null);
+  const [store, setStore] = useState<Store | null>(null);
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+  const [conflicts, setConflicts] = useState<{gameId: string, gameName: string, conflicts: FileConflict[]} | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'sync' | 'appearance'>('general');
 
-  // Auto-search for save locations and auto-fill cloud path when game name changes (debounced)
+  // Auto-search for save locations when game name changes (debounced)
   useEffect(() => {
     if (!newGame.name || newGame.name.length < 2) {
       setSaveLocationSuggestions([]);
@@ -121,27 +143,6 @@ function App() {
       setNewGame(prev => ({ ...prev, cloudPath: `${basePath}/${safeName}` }));
     }
   }, [newGame.name, settings.cloudConfigPath, games]);
-  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
-  const [updateAvailable, setUpdateAvailable] = useState<{version: string, notes?: string} | null>(null);
-  const [settings, setSettings] = useState<AppSettings>({
-    syncInterval: 5,
-    autoSync: true,
-    autoLaunch: false,
-    showNotifications: true,
-    confirmBeforeSync: false,
-    conflictResolution: 'manual',
-    dockVisibility: 'both',
-    theme: 'default',
-    cloudProvider: 'google-drive'
-  });
-  const [pendingSyncGameId, setPendingSyncGameId] = useState<string | null>(null); // For sync confirmation
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
-  const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | 'cloudConfig' | null>(null);
-  const [store, setStore] = useState<Store | null>(null);
-  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
-  const [conflicts, setConflicts] = useState<{gameId: string, gameName: string, conflicts: FileConflict[]} | null>(null);
-  const [settingsTab, setSettingsTab] = useState<'general' | 'sync' | 'appearance'>('general');
 
   // Initialize store and load data
   useEffect(() => {
