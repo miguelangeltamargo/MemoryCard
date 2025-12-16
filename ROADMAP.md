@@ -118,4 +118,4 @@ Have a feature request or found a bug? Open an issue on GitHub!
 
 ---
 
-*Last updated: December 2024*
+*Last updated: December 2025*
