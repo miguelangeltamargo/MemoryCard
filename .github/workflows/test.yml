@@ -14,24 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-          cache: 'npm'
-          cache-dependency-path: './MemoryCard/package-lock.json'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         working-directory: ./MemoryCard
-        run: npm ci
+        run: bun install
 
       - name: Run tests
         working-directory: ./MemoryCard
-        run: npm run test:run
+        run: bun run test:run
 
       - name: Run tests with coverage
         working-directory: ./MemoryCard
-        run: npm run test:coverage
+        run: bun run test:coverage
         continue-on-error: true
 
   backend-tests:
@@ -78,12 +74,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-          cache: 'npm'
-          cache-dependency-path: './MemoryCard/package-lock.json'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -97,11 +89,11 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: ./MemoryCard
-        run: npm ci
+        run: bun install
 
       - name: TypeScript check
         working-directory: ./MemoryCard
-        run: npx tsc --noEmit
+        run: bunx tsc --noEmit
 
       - name: Cache cargo
         uses: actions/cache@v4
