@@ -14,19 +14,25 @@ A cross-platform game save synchronization application built with Tauri 2.0.
 - [x] Filesystem-based save location search
 - [x] Auto-update mechanism (Tauri updater plugin)
 - [x] Sync confirmation/overwrite protection
+- [x] Delete confirmation dialog
 - [x] 8 color themes (Default, Cream, Midnight, Violet, Sunset, Ember, Forest, Ocean)
 - [x] Game detail view
 - [x] Clickable save paths (open in file explorer)
+- [x] Sticky header UI
+- [x] Auto-create cloud directory on game add
 
 ---
 
 ## Phase 2: Enhanced Desktop Features (In Progress)
 
-### v0.5.0 - Smart Save Detection
-- [ ] **PCGamingWiki API Integration** - Query verified save file locations
-- [ ] **AWS Bedrock Integration** - AI-powered save location prediction for unknown games
+### v0.5.0 - Smart Save Detection & Config
+- [ ] **PCGamingWiki API Integration** - Query verified save file locations from community database
+- [ ] **Google Cloud Vertex AI** - AI-powered save location prediction for unknown games
 - [ ] **Automatic Game Scanning** - Detect installed games from Steam, Epic, GOG
-- [ ] **Save Location Caching** - Local database of discovered save paths
+- [ ] **Save Location Caching** - Local SQLite database of discovered save paths
+- [ ] **Sync History Log** - Track all sync operations with timestamps and file changes
+- [ ] **Config Storage Options** - Toggle between local and cloud config storage
+- [ ] **Update Preferences** - Choose automatic, download-only, notify-only, or manual updates
 
 ### v0.6.0 - Progress Tracking
 - [ ] **Save File Parsing** - Extract progress data from supported games
@@ -35,10 +41,10 @@ A cross-platform game save synchronization application built with Tauri 2.0.
 - [ ] **Modern Card Design** - Show progress, screenshots in game tiles
 
 ### v0.7.0 - Sync Improvements
-- [ ] **Sync History Log** - Track all sync operations with details
 - [ ] **File-level Logging** - Show which files changed each sync
 - [ ] **Rollback Support** - Restore previous versions of save files
 - [ ] **Selective Sync** - Choose specific files/folders to sync
+- [ ] **Scheduled Sync** - Sync at specific times or on game launch/exit
 
 ### v0.8.0 - Platform Integration
 - [ ] **Steam Cloud Integration** - Sync with Steam's cloud saves
@@ -47,18 +53,25 @@ A cross-platform game save synchronization application built with Tauri 2.0.
 - [ ] **Xbox Game Pass Integration** - Sync with Xbox PC saves
 
 ### v0.9.0 - Polish & UX
-- [ ] **Update Preferences** - Choose automatic, manual, or notify-only updates
 - [ ] **Improved Onboarding** - First-run setup wizard
 - [ ] **Keyboard Shortcuts** - Power user navigation
 - [ ] **Drag & Drop** - Add games by dragging folders
+- [ ] **Search & Filter** - Find games quickly in large libraries
 
 ---
 
 ## Phase 3: Web Platform (Future)
 
+**Infrastructure: Google Cloud Platform**
+- Cloud Run for serverless API
+- Cloud SQL (PostgreSQL) for database
+- Cloud Storage for save files
+- Firebase Auth for authentication
+- Vertex AI for intelligent features
+
 ### v1.0.0 - Web Foundation
-- [ ] Next.js web application
-- [ ] User authentication (OAuth)
+- [ ] Next.js web application on Cloud Run
+- [ ] User authentication (Firebase Auth + OAuth)
 - [ ] Game database with save location configs
 - [ ] User profiles and game libraries
 - [ ] Desktop app API integration
@@ -87,7 +100,6 @@ A cross-platform game save synchronization application built with Tauri 2.0.
 ## Technical Debt & Improvements
 
 ### High Priority
-- [ ] Fix macOS icon size (needs ~15% padding)
 - [ ] Migrate from deprecated `cocoa` crate to `objc2-app-kit`
 - [ ] Add comprehensive error handling
 - [ ] Improve logging throughout app
@@ -105,9 +117,34 @@ A cross-platform game save synchronization application built with Tauri 2.0.
 
 ---
 
+## Implementation Details
+
+### PCGamingWiki API Integration
+Query the community-maintained database for verified save locations:
+```
+GET https://www.pcgamingwiki.com/w/api.php?action=cargoquery
+    &tables=Infobox_game,Game_data
+    &fields=Infobox_game._pageName=Page,Game_data.save_game_location
+    &where=Infobox_game._pageName LIKE "%{game_name}%"
+    &format=json
+```
+
+### Automatic Game Scanning
+Detect games from:
+- **Steam**: Parse `libraryfolders.vdf` and `appmanifest_*.acf` files
+- **Epic Games**: Parse `.item` JSON manifests in `ProgramData/Epic/`
+- **GOG Galaxy**: Query `galaxy-2.0.db` SQLite database
+
+### Google Cloud Services
+- **Vertex AI**: Predict save locations for games not in PCGamingWiki
+- **Cloud Firestore**: Cache predictions and user corrections
+- **Cloud Functions**: Serverless API endpoints for desktop app
+
+---
+
 ## How to Contribute
 
-1. Check the [Issues](https://github.com/YOUR_USERNAME/MemoryCard/issues) for open tasks
+1. Check the [Issues](https://github.com/miguelangeltamargo/MemoryCard/issues) for open tasks
 2. Fork the repository
 3. Create a feature branch
 4. Submit a pull request
