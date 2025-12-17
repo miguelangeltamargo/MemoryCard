@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SaveLocationSuggestion {
@@ -42,7 +42,11 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn sync_game_saves(local_path: String, cloud_path: String, auto_resolve: Option<String>) -> Result<SyncResult, String> {
+fn sync_game_saves(
+    local_path: String,
+    cloud_path: String,
+    auto_resolve: Option<String>,
+) -> Result<SyncResult, String> {
     let local = Path::new(&local_path);
     let cloud = Path::new(&cloud_path);
 
@@ -87,27 +91,33 @@ fn sync_game_saves(local_path: String, cloud_path: String, auto_resolve: Option<
                     // Auto-resolve based on preference
                     match resolution.as_str() {
                         "local" => {
-                            copy_file(&local_file.path, &cloud_file.path).map_err(|e| e.to_string())?;
+                            copy_file(&local_file.path, &cloud_file.path)
+                                .map_err(|e| e.to_string())?;
                             files_synced += 1;
                         }
                         "cloud" => {
-                            copy_file(&cloud_file.path, &local_file.path).map_err(|e| e.to_string())?;
+                            copy_file(&cloud_file.path, &local_file.path)
+                                .map_err(|e| e.to_string())?;
                             files_synced += 1;
                         }
                         "newer" => {
                             // Original behavior - use timestamp
                             if local_file.modified > cloud_file.modified {
-                                copy_file(&local_file.path, &cloud_file.path).map_err(|e| e.to_string())?;
+                                copy_file(&local_file.path, &cloud_file.path)
+                                    .map_err(|e| e.to_string())?;
                                 files_synced += 1;
                             } else {
-                                copy_file(&cloud_file.path, &local_file.path).map_err(|e| e.to_string())?;
+                                copy_file(&cloud_file.path, &local_file.path)
+                                    .map_err(|e| e.to_string())?;
                                 files_synced += 1;
                             }
                         }
                         _ => {
                             // Unknown resolution, treat as conflict
-                            let local_metadata = fs::metadata(&local_file.path).map_err(|e| e.to_string())?;
-                            let cloud_metadata = fs::metadata(&cloud_file.path).map_err(|e| e.to_string())?;
+                            let local_metadata =
+                                fs::metadata(&local_file.path).map_err(|e| e.to_string())?;
+                            let cloud_metadata =
+                                fs::metadata(&cloud_file.path).map_err(|e| e.to_string())?;
 
                             conflicts.push(FileConflict {
                                 relative_path: relative_path.to_string_lossy().to_string(),
@@ -122,8 +132,10 @@ fn sync_game_saves(local_path: String, cloud_path: String, auto_resolve: Option<
                     }
                 } else {
                     // No auto-resolve - report conflict
-                    let local_metadata = fs::metadata(&local_file.path).map_err(|e| e.to_string())?;
-                    let cloud_metadata = fs::metadata(&cloud_file.path).map_err(|e| e.to_string())?;
+                    let local_metadata =
+                        fs::metadata(&local_file.path).map_err(|e| e.to_string())?;
+                    let cloud_metadata =
+                        fs::metadata(&cloud_file.path).map_err(|e| e.to_string())?;
 
                     conflicts.push(FileConflict {
                         relative_path: relative_path.to_string_lossy().to_string(),
@@ -165,7 +177,10 @@ fn sync_game_saves(local_path: String, cloud_path: String, auto_resolve: Option<
         message: if conflicts.is_empty() {
             format!("Successfully synced {} file(s)", files_synced)
         } else {
-            format!("Found {} conflict(s) - user resolution required", conflicts.len())
+            format!(
+                "Found {} conflict(s) - user resolution required",
+                conflicts.len()
+            )
         },
         files_synced,
         conflicts,
@@ -185,10 +200,7 @@ fn get_files_recursive(dir: &Path) -> std::io::Result<Vec<FileInfo>> {
             } else {
                 let metadata = fs::metadata(&path)?;
                 if let Ok(modified) = metadata.modified() {
-                    files.push(FileInfo {
-                        path,
-                        modified,
-                    });
+                    files.push(FileInfo { path, modified });
                 }
             }
         }
@@ -349,8 +361,8 @@ fn launch_cloud_app(cloud_provider: String) -> Result<(), String> {
 fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        use tauri::ActivationPolicy;
         use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
+        use tauri::ActivationPolicy;
 
         // Regular = shows in dock and can appear in app switcher
         // Accessory = hides from dock (menu bar app style)
@@ -366,7 +378,9 @@ fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<Stri
         unsafe {
             let ns_app = NSApp();
             let ns_policy = match visibility.as_str() {
-                "menu-bar-only" | "neither" => NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+                "menu-bar-only" | "neither" => {
+                    NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
+                }
                 _ => NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
             };
             ns_app.setActivationPolicy_(ns_policy);
@@ -578,22 +592,38 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--flag", "minimized"])))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--flag", "minimized"]),
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Create app menu with Preferences
             #[cfg(target_os = "macos")]
             {
-                let about_i = MenuItem::with_id(app, "about", "About MemoryCard", true, None::<&str>)?;
-                let preferences_i = MenuItem::with_id(app, "preferences", "Settings...", true, Some("CmdOrCtrl+,"))?;
-                let quit_app_i = MenuItem::with_id(app, "quit_app", "Quit MemoryCard", true, Some("CmdOrCtrl+Q"))?;
+                let about_i =
+                    MenuItem::with_id(app, "about", "About MemoryCard", true, None::<&str>)?;
+                let preferences_i = MenuItem::with_id(
+                    app,
+                    "preferences",
+                    "Settings...",
+                    true,
+                    Some("CmdOrCtrl+,"),
+                )?;
+                let quit_app_i = MenuItem::with_id(
+                    app,
+                    "quit_app",
+                    "Quit MemoryCard",
+                    true,
+                    Some("CmdOrCtrl+Q"),
+                )?;
 
                 let app_submenu = Submenu::with_items(
                     app,
                     "MemoryCard",
                     true,
-                    &[&about_i, &preferences_i, &quit_app_i]
+                    &[&about_i, &preferences_i, &quit_app_i],
                 )?;
 
                 let app_menu = Menu::with_items(app, &[&app_submenu])?;
@@ -674,27 +704,25 @@ pub fn run() {
                 .build(app)?;
 
             // Handle app menu events (macOS)
-            app.on_menu_event(|app, event| {
-                match event.id().as_ref() {
-                    "preferences" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                            let _ = window.emit("open-settings", ());
-                        }
+            app.on_menu_event(|app, event| match event.id().as_ref() {
+                "preferences" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                        let _ = window.emit("open-settings", ());
                     }
-                    "about" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.emit("open-about", ());
-                        }
-                    }
-                    "quit_app" => {
-                        app.exit(0);
-                    }
-                    _ => {}
                 }
+                "about" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.emit("open-about", ());
+                    }
+                }
+                "quit_app" => {
+                    app.exit(0);
+                }
+                _ => {}
             });
 
             // Handle window close event - hide instead of close
