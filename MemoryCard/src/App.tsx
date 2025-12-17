@@ -76,13 +76,14 @@ function App() {
     autoSync: true,
     autoLaunch: false,
     showNotifications: true,
-    confirmBeforeSync: false,
+    confirmBeforeSync: true, // Enabled by default for safety
     conflictResolution: 'manual',
     dockVisibility: 'both',
     theme: 'default',
     cloudProvider: 'google-drive'
   });
   const [pendingSyncGameId, setPendingSyncGameId] = useState<string | null>(null); // For sync confirmation
+  const [pendingDeleteGameId, setPendingDeleteGameId] = useState<string | null>(null); // For delete confirmation
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [browsing, setBrowsing] = useState<'localPath' | 'cloudPath' | 'cloudConfig' | null>(null);
@@ -391,8 +392,17 @@ function App() {
     }
   };
 
-  const handleAddGame = () => {
+  const handleAddGame = async () => {
     if (newGame.name && newGame.localPath && newGame.cloudPath) {
+      // Create cloud directory if it doesn't exist
+      try {
+        await invoke('create_directory', { path: newGame.cloudPath });
+      } catch (error) {
+        console.error('Failed to create cloud directory:', error);
+        setNotification({ message: `Failed to create cloud directory: ${error}`, type: 'error' });
+        return;
+      }
+
       const game: Game = {
         id: Date.now().toString(),
         name: newGame.name,
@@ -525,8 +535,19 @@ function App() {
     }
   };
 
+  // Request delete - shows confirmation
+  const requestDeleteGame = (gameId: string) => {
+    setPendingDeleteGameId(gameId);
+  };
+
+  // Confirmed delete execution
   const handleRemoveGame = (gameId: string) => {
     setGames(games.filter(g => g.id !== gameId));
+    setPendingDeleteGameId(null);
+    // Close detail modal if we deleted the selected game
+    if (selectedGame?.id === gameId) {
+      setSelectedGame(null);
+    }
   };
 
   const handleResolveAllConflicts = async (useLocal: boolean) => {
@@ -566,7 +587,11 @@ function App() {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (conflicts) {
+        if (pendingDeleteGameId) {
+          setPendingDeleteGameId(null);
+        } else if (pendingSyncGameId) {
+          setPendingSyncGameId(null);
+        } else if (conflicts) {
           setConflicts(null);
         } else if (selectedGame) {
           setSelectedGame(null);
@@ -582,7 +607,7 @@ function App() {
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [showAddGame, showSettings, conflicts, selectedGame, showAbout]);
+  }, [showAddGame, showSettings, conflicts, selectedGame, showAbout, pendingDeleteGameId, pendingSyncGameId]);
 
   // Helper function to open folder in explorer
   const openInExplorer = async (path: string, e?: React.MouseEvent) => {
@@ -1237,7 +1262,7 @@ function App() {
                   className="btn btn-sm btn-icon btn-danger"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleRemoveGame(game.id);
+                    requestDeleteGame(game.id);
                   }}
                   title="Remove game"
                 >
@@ -1307,8 +1332,7 @@ function App() {
                 <button
                   className="btn btn-danger"
                   onClick={() => {
-                    handleRemoveGame(selectedGame.id);
-                    setSelectedGame(null);
+                    requestDeleteGame(selectedGame.id);
                   }}
                 >
                   Remove Game
@@ -1364,6 +1388,34 @@ function App() {
                   }}
                 >
                   Sync Now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pendingDeleteGameId && (
+          <div className="modal-overlay" onClick={() => setPendingDeleteGameId(null)}>
+            <div className="modal conflict-modal" onClick={(e) => e.stopPropagation()}>
+              <h2>Confirm Delete</h2>
+              <p className="conflict-description">
+                Are you sure you want to remove <strong>"{games.find(g => g.id === pendingDeleteGameId)?.name}"</strong> from your library?
+              </p>
+              <p className="setting-description" style={{ marginBottom: '1rem' }}>
+                This will only remove the game from MemoryCard. Your save files will not be deleted.
+              </p>
+              <div className="conflict-buttons">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setPendingDeleteGameId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleRemoveGame(pendingDeleteGameId)}
+                >
+                  Remove Game
                 </button>
               </div>
             </div>

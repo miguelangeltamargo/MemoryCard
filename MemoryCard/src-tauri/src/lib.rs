@@ -218,6 +218,15 @@ fn sync_config_to_cloud(config_path: String, config: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+fn create_directory(path: String) -> Result<(), String> {
+    let dir_path = Path::new(&path);
+    if !dir_path.exists() {
+        fs::create_dir_all(dir_path).map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn resolve_conflict(local_path: String, cloud_path: String, use_local: bool) -> Result<(), String> {
     let local = Path::new(&local_path);
     let cloud = Path::new(&cloud_path);
@@ -751,6 +760,7 @@ pub fn run() {
             sync_game_saves,
             sync_config_to_cloud,
             resolve_conflict,
+            create_directory,
             set_dock_visibility,
             open_folder_in_explorer,
             launch_cloud_app,
