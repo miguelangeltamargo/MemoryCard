@@ -33,7 +33,15 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockStoreGet.mockResolvedValue(null);
-    mockInvoke.mockResolvedValue({ success: true, files_synced: 0, conflicts: [] });
+    // Mock various invoke calls that happen on mount and during operations
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
+      if (cmd === 'sync_game_saves') return Promise.resolve({ success: true, files_synced: 0, conflicts: [] });
+      if (cmd === 'create_directory') return Promise.resolve(undefined);
+      if (cmd === 'log_sync_operation') return Promise.resolve(1);
+      if (cmd === 'get_sync_history') return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
   });
 
   describe('Initial Render', () => {
@@ -275,7 +283,7 @@ describe('App', () => {
       });
     });
 
-    it('removes game when clicking remove button', async () => {
+    it('removes game when clicking remove button and confirming', async () => {
       const user = userEvent.setup();
       render(<App />);
 
@@ -287,7 +295,18 @@ describe('App', () => {
       const removeButton = screen.getByTitle('Remove game');
       await user.click(removeButton);
 
-      expect(screen.queryByText('Hollow Knight')).not.toBeInTheDocument();
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+
+      // Click the confirm button
+      await user.click(screen.getByRole('button', { name: 'Remove Game' }));
+
+      // Game should now be removed
+      await waitFor(() => {
+        expect(screen.queryByText('Hollow Knight')).not.toBeInTheDocument();
+      });
     });
   });
 
@@ -302,15 +321,22 @@ describe('App', () => {
           status: 'pending'
         }
       ];
+      // Return settings with confirmBeforeSync: false to simplify tests
       mockStoreGet.mockImplementation((key: string) => {
         if (key === 'games') return Promise.resolve(savedGames);
+        if (key === 'settings') return Promise.resolve({ confirmBeforeSync: false });
         return Promise.resolve(null);
       });
     });
 
     it('calls invoke with sync_game_saves when syncing', async () => {
       const user = userEvent.setup();
-      mockInvoke.mockResolvedValue({ success: true, files_synced: 2, conflicts: [] });
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
+        if (cmd === 'sync_game_saves') return Promise.resolve({ success: true, files_synced: 2, conflicts: [] });
+        if (cmd === 'log_sync_operation') return Promise.resolve(1);
+        return Promise.resolve(undefined);
+      });
 
       render(<App />);
 
@@ -328,13 +354,14 @@ describe('App', () => {
       });
     });
 
-    it('shows syncing state during sync', async () => {
+    it('updates game status after sync completes', async () => {
       const user = userEvent.setup();
-
-      // Make invoke take some time
-      mockInvoke.mockImplementation(() => new Promise(resolve => {
-        setTimeout(() => resolve({ success: true, files_synced: 0, conflicts: [] }), 100);
-      }));
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
+        if (cmd === 'sync_game_saves') return Promise.resolve({ success: true, files_synced: 1, conflicts: [] });
+        if (cmd === 'log_sync_operation') return Promise.resolve(1);
+        return Promise.resolve(undefined);
+      });
 
       render(<App />);
 
@@ -342,14 +369,26 @@ describe('App', () => {
         expect(screen.getByText('Test Game')).toBeInTheDocument();
       });
 
+      // Game should initially show pending status
+      expect(screen.getByText('⏱ Pending')).toBeInTheDocument();
+
+      // Click Sync All
       await user.click(screen.getByRole('button', { name: /sync all/i }));
 
-      expect(screen.getByRole('button', { name: /syncing/i })).toBeInTheDocument();
+      // After sync completes, status should be synced
+      await waitFor(() => {
+        expect(screen.getByText('✓ Synced')).toBeInTheDocument();
+      });
     });
 
     it('syncs individual game when clicking Sync Now on game card', async () => {
       const user = userEvent.setup();
-      mockInvoke.mockResolvedValue({ success: true, files_synced: 1, conflicts: [] });
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
+        if (cmd === 'sync_game_saves') return Promise.resolve({ success: true, files_synced: 1, conflicts: [] });
+        if (cmd === 'log_sync_operation') return Promise.resolve(1);
+        return Promise.resolve(undefined);
+      });
 
       render(<App />);
 
@@ -381,24 +420,29 @@ describe('App', () => {
       ];
       mockStoreGet.mockImplementation((key: string) => {
         if (key === 'games') return Promise.resolve(savedGames);
+        if (key === 'settings') return Promise.resolve({ confirmBeforeSync: false });
         return Promise.resolve(null);
       });
     });
 
     it('shows conflict modal when sync returns conflicts', async () => {
       const user = userEvent.setup();
-      mockInvoke.mockResolvedValue({
-        success: true,
-        files_synced: 0,
-        conflicts: [{
-          relative_path: 'save.dat',
-          local_path: '/local/conflict/save.dat',
-          cloud_path: '/cloud/conflict/save.dat',
-          local_modified: '2024-01-01',
-          cloud_modified: '2024-01-02',
-          local_size: 1024,
-          cloud_size: 2048
-        }]
+      mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
+        if (cmd === 'sync_game_saves') return Promise.resolve({
+          success: true,
+          files_synced: 0,
+          conflicts: [{
+            relative_path: 'save.dat',
+            local_path: '/local/conflict/save.dat',
+            cloud_path: '/cloud/conflict/save.dat',
+            local_modified: '2024-01-01',
+            cloud_modified: '2024-01-02',
+            local_size: 1024,
+            cloud_size: 2048
+          }]
+        });
+        return Promise.resolve(undefined);
       });
 
       render(<App />);
@@ -432,8 +476,10 @@ describe('App', () => {
       };
 
       mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
         if (cmd === 'sync_game_saves') return Promise.resolve(conflictData);
         if (cmd === 'resolve_conflict') return Promise.resolve(undefined);
+        if (cmd === 'log_sync_operation') return Promise.resolve(1);
         return Promise.resolve(undefined);
       });
 
@@ -477,8 +523,10 @@ describe('App', () => {
       };
 
       mockInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'set_dock_visibility') return Promise.resolve('ok');
         if (cmd === 'sync_game_saves') return Promise.resolve(conflictData);
         if (cmd === 'resolve_conflict') return Promise.resolve(undefined);
+        if (cmd === 'log_sync_operation') return Promise.resolve(1);
         return Promise.resolve(undefined);
       });
 

@@ -866,6 +866,140 @@ body {
   font-size: 0.75rem;
 }
 
+/* About Update Section */
+.about-update-section {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+}
+
+.about-update-section h3 {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.update-available-inline {
+  text-align: center;
+}
+
+.update-available-inline p {
+  margin-bottom: 0.5rem;
+  color: var(--accent-orange);
+  font-weight: 500;
+}
+
+.update-notes-small {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.update-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.update-status p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+/* Sync History Modal */
+.sync-history-modal {
+  max-width: 600px;
+  max-height: 80vh;
+}
+
+.sync-history-content {
+  max-height: 400px;
+  overflow-y: auto;
+  margin: 1rem 0;
+}
+
+.empty-history {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 2rem;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.history-entry {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  border-left: 3px solid var(--success);
+}
+
+.history-entry.error {
+  border-left-color: var(--danger);
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.history-game {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.history-time {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.history-details {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.history-status {
+  color: var(--success);
+}
+
+.history-status.error {
+  color: var(--danger);
+}
+
+.history-files {
+  color: var(--text-secondary);
+}
+
+.history-direction {
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+}
+
+.history-error {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(196, 73, 0, 0.1);
+  border-radius: 0.25rem;
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+
 .form-group select {
   width: 100%;
   padding: 0.75rem;

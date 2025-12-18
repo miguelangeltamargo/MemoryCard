@@ -1,6 +1,9 @@
+use chrono::Utc;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +36,95 @@ struct FileConflict {
 struct FileInfo {
     path: PathBuf,
     modified: SystemTime,
+}
+
+// Sync History Logging
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncLogEntry {
+    pub id: i64,
+    pub game_id: String,
+    pub game_name: String,
+    pub timestamp: String,
+    pub operation: String, // "sync", "conflict_resolved", "error"
+    pub files_synced: i32,
+    pub files_changed: Vec<String>,
+    pub direction: String, // "local_to_cloud", "cloud_to_local", "bidirectional"
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+// PCGamingWiki API Response types
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGamingWikiResponse {
+    cargoquery: Vec<PCGamingWikiResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGamingWikiResult {
+    title: PCGamingWikiTitle,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGamingWikiTitle {
+    #[serde(rename = "Page")]
+    page: Option<String>,
+    #[serde(rename = "save game location")]
+    save_game_location: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PCGamingWikiSaveLocation {
+    pub game_name: String,
+    pub save_paths: Vec<String>,
+    pub source: String,
+}
+
+// Database state managed by Tauri
+pub struct DbState(pub Mutex<Option<Connection>>);
+
+fn get_db_path() -> PathBuf {
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.memorycard.app");
+    fs::create_dir_all(&data_dir).ok();
+    data_dir.join("sync_history.db")
+}
+
+fn init_database() -> Result<Connection, String> {
+    let db_path = get_db_path();
+    let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sync_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT NOT NULL,
+            game_name TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            files_synced INTEGER NOT NULL,
+            files_changed TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            error_message TEXT
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create table: {}", e))?;
+
+    // Create index for faster queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sync_history_game_id ON sync_history(game_id)",
+        [],
+    )
+    .ok();
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sync_history_timestamp ON sync_history(timestamp DESC)",
+        [],
+    )
+    .ok();
+
+    Ok(conn)
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -361,7 +453,8 @@ fn launch_cloud_app(cloud_provider: String) -> Result<(), String> {
 fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
         use tauri::ActivationPolicy;
 
         // Regular = shows in dock and can appear in app switcher
@@ -371,19 +464,20 @@ fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<Stri
             _ => ActivationPolicy::Regular,
         };
 
-        // Use both Tauri API and native cocoa API for immediate effect
+        // Use both Tauri API and native objc2-app-kit API for immediate effect
         let _ = app.set_activation_policy(policy);
 
         // Also set via native API for immediate effect
-        unsafe {
-            let ns_app = NSApp();
+        // This runs on the main thread in Tauri, so we can safely get the marker
+        if let Some(mtm) = MainThreadMarker::new() {
+            let ns_app = NSApplication::sharedApplication(mtm);
             let ns_policy = match visibility.as_str() {
                 "menu-bar-only" | "neither" => {
-                    NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
+                    NSApplicationActivationPolicy::Accessory
                 }
-                _ => NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+                _ => NSApplicationActivationPolicy::Regular,
             };
-            ns_app.setActivationPolicy_(ns_policy);
+            ns_app.setActivationPolicy(ns_policy);
         }
 
         Ok(format!("Visibility set to: {}", visibility))
@@ -407,6 +501,366 @@ fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     app.exit(0);
 
     Ok(())
+}
+
+// Sync History Commands
+#[tauri::command]
+fn log_sync_operation(
+    game_id: String,
+    game_name: String,
+    operation: String,
+    files_synced: i32,
+    files_changed: Vec<String>,
+    direction: String,
+    success: bool,
+    error_message: Option<String>,
+) -> Result<i64, String> {
+    let conn = init_database()?;
+    let timestamp = Utc::now().to_rfc3339();
+
+    let files_json = serde_json::to_string(&files_changed).unwrap_or_else(|_| "[]".to_string());
+
+    conn.execute(
+        "INSERT INTO sync_history (game_id, game_name, timestamp, operation, files_synced, files_changed, direction, success, error_message)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            game_id,
+            game_name,
+            timestamp,
+            operation,
+            files_synced,
+            files_json,
+            direction,
+            success as i32,
+            error_message
+        ],
+    )
+    .map_err(|e| format!("Failed to log sync operation: {}", e))?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+fn get_sync_history(
+    game_id: Option<String>,
+    limit: Option<i32>,
+) -> Result<Vec<SyncLogEntry>, String> {
+    let conn = init_database()?;
+    let limit = limit.unwrap_or(100);
+
+    let mut entries = Vec::new();
+
+    let query = if game_id.is_some() {
+        "SELECT id, game_id, game_name, timestamp, operation, files_synced, files_changed, direction, success, error_message
+         FROM sync_history WHERE game_id = ?1 ORDER BY timestamp DESC LIMIT ?2"
+    } else {
+        "SELECT id, game_id, game_name, timestamp, operation, files_synced, files_changed, direction, success, error_message
+         FROM sync_history ORDER BY timestamp DESC LIMIT ?1"
+    };
+
+    let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
+
+    let rows = if let Some(ref gid) = game_id {
+        stmt.query(params![gid, limit])
+    } else {
+        stmt.query(params![limit])
+    };
+
+    let mut rows = rows.map_err(|e| e.to_string())?;
+
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let files_json: String = row.get(6).unwrap_or_default();
+        let files_changed: Vec<String> = serde_json::from_str(&files_json).unwrap_or_default();
+
+        entries.push(SyncLogEntry {
+            id: row.get(0).unwrap_or(0),
+            game_id: row.get(1).unwrap_or_default(),
+            game_name: row.get(2).unwrap_or_default(),
+            timestamp: row.get(3).unwrap_or_default(),
+            operation: row.get(4).unwrap_or_default(),
+            files_synced: row.get(5).unwrap_or(0),
+            files_changed,
+            direction: row.get(7).unwrap_or_default(),
+            success: row.get::<_, i32>(8).unwrap_or(0) == 1,
+            error_message: row.get(9).ok(),
+        });
+    }
+
+    Ok(entries)
+}
+
+#[tauri::command]
+fn clear_sync_history(game_id: Option<String>) -> Result<i32, String> {
+    let conn = init_database()?;
+
+    let deleted = if let Some(gid) = game_id {
+        conn.execute("DELETE FROM sync_history WHERE game_id = ?1", params![gid])
+    } else {
+        conn.execute("DELETE FROM sync_history", [])
+    }
+    .map_err(|e| format!("Failed to clear history: {}", e))?;
+
+    Ok(deleted as i32)
+}
+
+// PCGamingWiki API Integration
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGWCargoResponse {
+    cargoquery: Option<Vec<PCGWCargoResult>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGWCargoResult {
+    title: PCGWCargoTitle,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PCGWCargoTitle {
+    #[serde(rename = "Page")]
+    page: Option<String>,
+    #[serde(rename = "Game data save game location")]
+    save_location: Option<String>,
+}
+
+#[tauri::command]
+async fn query_pcgamingwiki(game_name: String) -> Result<Vec<PCGamingWikiSaveLocation>, String> {
+    let mut results = Vec::new();
+
+    // Query PCGamingWiki API for save game locations
+    let encoded_name = urlencoding::encode(&game_name);
+    let url = format!(
+        "https://www.pcgamingwiki.com/w/api.php?action=cargoquery&tables=Infobox_game,Game_data&join_on=Infobox_game._pageID=Game_data._pageID&fields=Infobox_game._pageName=Page,Game_data.save_game_location=Game%20data%20save%20game%20location&where=Infobox_game._pageName%20LIKE%20%22%25{}%25%22&format=json&limit=10",
+        encoded_name
+    );
+
+    // Make HTTP request to PCGamingWiki
+    match reqwest::get(&url).await {
+        Ok(response) => {
+            if let Ok(text) = response.text().await {
+                // Try to parse the response
+                if let Ok(data) = serde_json::from_str::<PCGWCargoResponse>(&text) {
+                    if let Some(cargo_results) = data.cargoquery {
+                        for result in cargo_results {
+                            if let Some(page_name) = result.title.page {
+                                if let Some(save_loc) = result.title.save_location {
+                                    // Parse the save location (it may contain wiki markup)
+                                    let paths = parse_pcgw_save_location(&save_loc);
+                                    if !paths.is_empty() {
+                                        results.push(PCGamingWikiSaveLocation {
+                                            game_name: page_name,
+                                            save_paths: paths,
+                                            source: "pcgamingwiki".to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            println!("PCGamingWiki API request failed: {}", e);
+        }
+    }
+
+    // Also do local filesystem search as fallback
+    if let Ok(home) = dirs::home_dir().ok_or("No home") {
+        let game_variants = generate_name_variants(&game_name);
+        let mut found_paths = Vec::new();
+
+        #[cfg(target_os = "macos")]
+        {
+            let search_bases = vec![
+                home.join("Library/Application Support"),
+                home.join("Library/Application Support/unity3d"),
+                home.join("Library/Containers"),
+                home.join("Documents"),
+            ];
+
+            for base in search_bases {
+                if !base.exists() {
+                    continue;
+                }
+                for variant in &game_variants {
+                    let path = base.join(variant);
+                    if path.exists() {
+                        let path_str = path.to_string_lossy().to_string();
+                        if !found_paths.contains(&path_str) {
+                            found_paths.push(path_str);
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let search_bases: Vec<PathBuf> = vec![
+                dirs::data_dir(),
+                dirs::data_local_dir(),
+                dirs::document_dir().map(|p| p.join("My Games")),
+                Some(home.join("Saved Games")),
+                Some(home.join("AppData/LocalLow")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            for base in search_bases {
+                if !base.exists() {
+                    continue;
+                }
+                for variant in &game_variants {
+                    let path = base.join(variant);
+                    if path.exists() {
+                        let path_str = path.to_string_lossy().to_string();
+                        if !found_paths.contains(&path_str) {
+                            found_paths.push(path_str);
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let search_bases = vec![
+                home.join(".local/share"),
+                home.join(".config"),
+                home.clone(),
+            ];
+
+            for base in search_bases {
+                for variant in &game_variants {
+                    let path = base.join(variant);
+                    if path.exists() {
+                        let path_str = path.to_string_lossy().to_string();
+                        if !found_paths.contains(&path_str) {
+                            found_paths.push(path_str);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !found_paths.is_empty() {
+            results.push(PCGamingWikiSaveLocation {
+                game_name: game_name.clone(),
+                save_paths: found_paths,
+                source: "local_search".to_string(),
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+// Parse PCGamingWiki save location markup into actual paths
+fn parse_pcgw_save_location(raw: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+
+    // PCGamingWiki uses templates like {{p|game}}\saves or {{p|localappdata}}\GameName
+    // We need to expand these to actual paths
+
+    let home = dirs::home_dir().unwrap_or_default();
+
+    // Common path variables in PCGamingWiki
+    let replacements: Vec<(&str, String)> = vec![
+        ("{{p|game}}", "".to_string()), // Game install directory - skip
+        ("{{p|userprofile}}", home.to_string_lossy().to_string()),
+        (
+            "{{p|userprofile\\documents}}",
+            dirs::document_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "{{p|appdata}}",
+            dirs::data_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "{{p|localappdata}}",
+            dirs::data_local_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ),
+        #[cfg(target_os = "macos")]
+        ("{{p|osxhome}}", home.to_string_lossy().to_string()),
+        #[cfg(target_os = "macos")]
+        (
+            "{{p|osxappsupport}}",
+            home.join("Library/Application Support")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        #[cfg(target_os = "linux")]
+        ("{{p|linuxhome}}", home.to_string_lossy().to_string()),
+        #[cfg(target_os = "linux")]
+        (
+            "{{p|xdgdatahome}}",
+            home.join(".local/share").to_string_lossy().to_string(),
+        ),
+        #[cfg(target_os = "linux")]
+        (
+            "{{p|xdgconfighome}}",
+            home.join(".config").to_string_lossy().to_string(),
+        ),
+    ];
+
+    // Split by newlines or | separators
+    for line in raw.split(&['\n', '|'][..]) {
+        let mut path = line.trim().to_string();
+
+        // Skip empty lines or wiki markup
+        if path.is_empty() || path.starts_with("{{") && !path.contains("{{p|") {
+            continue;
+        }
+
+        // Expand path variables
+        for (var, replacement) in &replacements {
+            path = path.replace(var, replacement);
+        }
+
+        // Clean up remaining wiki markup
+        path = path.replace("{{", "").replace("}}", "");
+
+        // Convert backslashes to forward slashes
+        path = path.replace("\\", "/");
+
+        // Skip if still contains unexpanded templates or is empty
+        if path.contains("{{") || path.is_empty() || path == "/" {
+            continue;
+        }
+
+        // Normalize path
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+
+    paths
+}
+
+// Config file management
+#[tauri::command]
+fn read_cloud_config(config_path: String) -> Result<String, String> {
+    let path = Path::new(&config_path);
+    if !path.exists() {
+        return Err("Config file does not exist".to_string());
+    }
+    fs::read_to_string(path).map_err(|e| format!("Failed to read config: {}", e))
+}
+
+#[tauri::command]
+fn get_local_config_path() -> Result<String, String> {
+    let data_dir = dirs::data_dir()
+        .ok_or("Could not find data directory")?
+        .join("com.memorycard.app");
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    Ok(data_dir.join("config.json").to_string_lossy().to_string())
 }
 
 /// Searches for game save locations by scanning common directories for matching folder names.
@@ -663,11 +1117,12 @@ pub fn run() {
                                     // On macOS, activate the app first
                                     #[cfg(target_os = "macos")]
                                     {
-                                        use cocoa::appkit::{NSApp, NSApplication};
-                                        use cocoa::base::YES;
-                                        unsafe {
-                                            let ns_app = NSApp();
-                                            ns_app.activateIgnoringOtherApps_(YES);
+                                        use objc2::MainThreadMarker;
+                                        use objc2_app_kit::NSApplication;
+                                        if let Some(mtm) = MainThreadMarker::new() {
+                                            let ns_app = NSApplication::sharedApplication(mtm);
+                                            #[allow(deprecated)]
+                                            ns_app.activateIgnoringOtherApps(true);
                                         }
                                     }
 
@@ -793,7 +1248,13 @@ pub fn run() {
             open_folder_in_explorer,
             launch_cloud_app,
             restart_app,
-            find_save_locations
+            find_save_locations,
+            log_sync_operation,
+            get_sync_history,
+            clear_sync_history,
+            query_pcgamingwiki,
+            read_cloud_config,
+            get_local_config_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

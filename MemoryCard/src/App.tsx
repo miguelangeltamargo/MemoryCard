@@ -22,6 +22,7 @@ interface AppSettings {
   syncInterval: number; // in minutes
   autoSync: boolean;
   cloudConfigPath?: string; // Path to store config in cloud
+  configStorageMode: 'local' | 'cloud'; // Where to store/read config
   autoLaunch: boolean;
   showNotifications: boolean;
   confirmBeforeSync: boolean; // Show warning before syncing
@@ -29,6 +30,20 @@ interface AppSettings {
   dockVisibility: 'menu-bar-only' | 'dock-only' | 'both' | 'neither';
   theme: 'default' | 'cream' | 'midnight' | 'violet' | 'sunset' | 'ember' | 'forest' | 'ocean';
   cloudProvider: 'google-drive' | 'dropbox' | 'onedrive' | 'icloud' | 'other';
+  updatePreference: 'automatic' | 'download-only' | 'notify-only' | 'manual';
+}
+
+interface SyncLogEntry {
+  id: number;
+  game_id: string;
+  game_name: string;
+  timestamp: string;
+  operation: string;
+  files_synced: number;
+  files_changed: string[];
+  direction: string;
+  success: boolean;
+  error_message?: string;
 }
 
 interface SyncProgress {
@@ -80,8 +95,12 @@ function App() {
     conflictResolution: 'manual',
     dockVisibility: 'both',
     theme: 'default',
-    cloudProvider: 'google-drive'
+    cloudProvider: 'google-drive',
+    configStorageMode: 'local',
+    updatePreference: 'notify-only'
   });
+  const [syncHistory, setSyncHistory] = useState<SyncLogEntry[]>([]);
+  const [showSyncHistory, setShowSyncHistory] = useState(false);
   const [pendingSyncGameId, setPendingSyncGameId] = useState<string | null>(null); // For sync confirmation
   const [pendingDeleteGameId, setPendingDeleteGameId] = useState<string | null>(null); // For delete confirmation
   const [syncing, setSyncing] = useState(false);
@@ -332,6 +351,58 @@ function App() {
     }
   };
 
+  // Load sync history
+  const loadSyncHistory = async (gameId?: string) => {
+    try {
+      const history = await invoke<SyncLogEntry[]>('get_sync_history', {
+        gameId: gameId || null,
+        limit: 50
+      });
+      setSyncHistory(history);
+    } catch (error) {
+      console.error('Failed to load sync history:', error);
+    }
+  };
+
+  // Log a sync operation
+  const logSyncOperation = async (
+    gameId: string,
+    gameName: string,
+    operation: string,
+    filesSynced: number,
+    filesChanged: string[],
+    direction: string,
+    success: boolean,
+    errorMessage?: string
+  ) => {
+    try {
+      await invoke('log_sync_operation', {
+        gameId,
+        gameName,
+        operation,
+        filesSynced,
+        filesChanged,
+        direction,
+        success,
+        errorMessage: errorMessage || null
+      });
+    } catch (error) {
+      console.error('Failed to log sync operation:', error);
+    }
+  };
+
+  // Clear sync history
+  const handleClearHistory = async (gameId?: string) => {
+    try {
+      await invoke('clear_sync_history', { gameId: gameId || null });
+      setSyncHistory([]);
+      setNotification({ message: 'Sync history cleared', type: 'success' });
+    } catch (error) {
+      console.error('Failed to clear history:', error);
+      setNotification({ message: 'Failed to clear history', type: 'error' });
+    }
+  };
+
   // Sync config to cloud
   useEffect(() => {
     const syncConfigToCloud = async () => {
@@ -497,6 +568,17 @@ function App() {
           syncedCount++;
           filesChanged += result.files_synced;
 
+          // Log the sync operation
+          await logSyncOperation(
+            game.id,
+            game.name,
+            'sync',
+            result.files_synced,
+            [], // TODO: Get actual file names from result
+            'bidirectional',
+            true
+          );
+
           // For single game sync, show notification immediately
           if (gameId) {
             setNotification({
@@ -508,6 +590,19 @@ function App() {
           }
         } catch (error) {
           console.error(`Sync failed for ${game.name}:`, error);
+
+          // Log the failed sync
+          await logSyncOperation(
+            game.id,
+            game.name,
+            'sync',
+            0,
+            [],
+            'bidirectional',
+            false,
+            String(error)
+          );
+
           // Update status back to pending on error
           setGames(prev => prev.map(g =>
             g.id === game.id ? { ...g, status: 'pending' as const } : g
@@ -591,6 +686,8 @@ function App() {
           setPendingDeleteGameId(null);
         } else if (pendingSyncGameId) {
           setPendingSyncGameId(null);
+        } else if (showSyncHistory) {
+          setShowSyncHistory(false);
         } else if (conflicts) {
           setConflicts(null);
         } else if (selectedGame) {
@@ -607,7 +704,7 @@ function App() {
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [showAddGame, showSettings, conflicts, selectedGame, showAbout, pendingDeleteGameId, pendingSyncGameId]);
+  }, [showAddGame, showSettings, conflicts, selectedGame, showAbout, pendingDeleteGameId, pendingSyncGameId, showSyncHistory]);
 
   // Helper function to open folder in explorer
   const openInExplorer = async (path: string, e?: React.MouseEvent) => {
@@ -952,7 +1049,7 @@ function App() {
                     <div className="form-group update-section">
                       <label>Software Updates</label>
                       <div className="input-with-button">
-                        <span className="version-info">Current version: 0.4.5</span>
+                        <span className="version-info">Current version: 0.5.0</span>
                         <button
                           type="button"
                           className="btn btn-browse"
@@ -978,8 +1075,21 @@ function App() {
                           </button>
                         </div>
                       )}
+                    </div>
+
+                    <div className="form-group">
+                      <label>Update Behavior</label>
+                      <select
+                        value={settings.updatePreference}
+                        onChange={(e) => setSettings({...settings, updatePreference: e.target.value as AppSettings['updatePreference']})}
+                      >
+                        <option value="automatic">Automatic - Download and install automatically</option>
+                        <option value="download-only">Download Only - Download but ask before installing</option>
+                        <option value="notify-only">Notify Only - Just notify when updates are available</option>
+                        <option value="manual">Manual - Never check automatically</option>
+                      </select>
                       <p className="setting-description">
-                        MemoryCard will automatically check for updates on startup
+                        Choose how MemoryCard handles software updates
                       </p>
                     </div>
                   </>
@@ -1018,39 +1128,75 @@ function App() {
                     </div>
 
                     <div className="form-group">
-                      <label>Cloud Config Folder (Optional)</label>
+                      <label>Config Storage</label>
+                      <select
+                        value={settings.configStorageMode}
+                        onChange={(e) => setSettings({...settings, configStorageMode: e.target.value as 'local' | 'cloud'})}
+                      >
+                        <option value="local">Local only</option>
+                        <option value="cloud">Sync to cloud</option>
+                      </select>
+                      <p className="setting-description">
+                        Store your game library and settings locally or sync them to the cloud
+                      </p>
+                    </div>
+
+                    {settings.configStorageMode === 'cloud' && (
+                      <div className="form-group">
+                        <label>Cloud Config Folder</label>
+                        <div className="input-with-button">
+                          <input
+                            type="text"
+                            placeholder="~/Google Drive/MemoryCard"
+                            value={settings.cloudConfigPath || ''}
+                            onChange={(e) => setSettings({...settings, cloudConfigPath: e.target.value})}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-browse"
+                            onClick={async () => {
+                              setBrowsing('cloudConfig');
+                              try {
+                                const selected = await open({
+                                  directory: true,
+                                  multiple: false,
+                                  title: 'Select Cloud Config Folder'
+                                });
+                                if (selected && typeof selected === 'string') {
+                                  setSettings({...settings, cloudConfigPath: selected});
+                                }
+                              } finally {
+                                setBrowsing(null);
+                              }
+                            }}
+                            disabled={browsing !== null}
+                          >
+                            {browsing === 'cloudConfig' ? '...' : 'Browse'}
+                          </button>
+                        </div>
+                        <p className="setting-description">
+                          Your settings and game list will be saved here and synced across devices
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="form-group">
+                      <label>Sync History</label>
                       <div className="input-with-button">
-                        <input
-                          type="text"
-                          placeholder="~/Google Drive/MemoryCard"
-                          value={settings.cloudConfigPath || ''}
-                          onChange={(e) => setSettings({...settings, cloudConfigPath: e.target.value})}
-                        />
+                        <span className="version-info">{syncHistory.length} entries logged</span>
                         <button
                           type="button"
                           className="btn btn-browse"
-                          onClick={async () => {
-                            setBrowsing('cloudConfig');
-                            try {
-                              const selected = await open({
-                                directory: true,
-                                multiple: false,
-                                title: 'Select Cloud Config Folder'
-                              });
-                              if (selected && typeof selected === 'string') {
-                                setSettings({...settings, cloudConfigPath: selected});
-                              }
-                            } finally {
-                              setBrowsing(null);
-                            }
+                          onClick={() => {
+                            loadSyncHistory();
+                            setShowSyncHistory(true);
                           }}
-                          disabled={browsing !== null}
                         >
-                          {browsing === 'cloudConfig' ? '...' : 'Browse'}
+                          View History
                         </button>
                       </div>
                       <p className="setting-description">
-                        Sync your settings and game list to cloud storage
+                        View detailed logs of all sync operations
                       </p>
                     </div>
                   </>
@@ -1122,13 +1268,43 @@ function App() {
             <div className="modal about-modal" onClick={(e) => e.stopPropagation()}>
               <div className="about-content">
                 <h1 className="about-title">MemoryCard</h1>
-                <p className="about-version">Version 0.4.5</p>
+                <p className="about-version">Version 0.5.0</p>
                 <p className="about-description">
                   Cross-platform game save synchronization
                 </p>
                 <div className="about-details">
                   <p>Sync your game saves across devices using your preferred cloud storage provider.</p>
                 </div>
+
+                <div className="about-update-section">
+                  <h3>Updates</h3>
+                  {updateAvailable ? (
+                    <div className="update-available-inline">
+                      <p>Version {updateAvailable.version} is available!</p>
+                      {updateAvailable.notes && (
+                        <p className="update-notes-small">{updateAvailable.notes}</p>
+                      )}
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={handleInstallUpdate}
+                      >
+                        Install Update
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="update-status">
+                      <p>You're running the latest version</p>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleCheckForUpdates}
+                        disabled={checkingForUpdates}
+                      >
+                        {checkingForUpdates ? 'Checking...' : 'Check for Updates'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="about-footer">
                   <p className="about-copyright">Made with care for gamers</p>
                 </div>
@@ -1137,6 +1313,61 @@ function App() {
                 <button
                   className="btn btn-primary"
                   onClick={() => setShowAbout(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showSyncHistory && (
+          <div className="modal-overlay" onClick={() => setShowSyncHistory(false)}>
+            <div className="modal sync-history-modal" onClick={(e) => e.stopPropagation()}>
+              <h2>Sync History</h2>
+              <div className="sync-history-content">
+                {syncHistory.length === 0 ? (
+                  <p className="empty-history">No sync operations logged yet</p>
+                ) : (
+                  <div className="history-list">
+                    {syncHistory.map((entry) => (
+                      <div key={entry.id} className={`history-entry ${entry.success ? 'success' : 'error'}`}>
+                        <div className="history-header">
+                          <span className="history-game">{entry.game_name}</span>
+                          <span className="history-time">
+                            {new Date(entry.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="history-details">
+                          <span className={`history-status ${entry.success ? 'success' : 'error'}`}>
+                            {entry.success ? '✓' : '✕'} {entry.operation}
+                          </span>
+                          <span className="history-files">
+                            {entry.files_synced} file(s) synced
+                          </span>
+                          {entry.direction && (
+                            <span className="history-direction">{entry.direction}</span>
+                          )}
+                        </div>
+                        {entry.error_message && (
+                          <p className="history-error">{entry.error_message}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="modal-actions">
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleClearHistory()}
+                  disabled={syncHistory.length === 0}
+                >
+                  Clear History
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowSyncHistory(false)}
                 >
                   Close
                 </button>
