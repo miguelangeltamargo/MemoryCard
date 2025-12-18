@@ -1,3 +1,8 @@
+# Tauri signing keys (NEVER commit these!)
+*.key
+*.key.pub
+~/.tauri/
+
 # Google Drive credentials and tokens
 credentials.json
 token.pickle
@@ -6,9 +11,12 @@ token.pickle
 config.json
 sync_config.json
 
-# Private documentation
-ARCHITECTURE.md
-design/
+# Private documentation and design files
+design/ARCHITECTURE.md
+design/*.pdf
+design/*.png
+design/MemoryCard.icon/
+design/MemoryCard Icns/
 
 # Log files
 *.log
@@ -27,6 +35,7 @@ ENV/
 
 # macOS
 .DS_Store
+*.DS_Store
 
 # Windows
 Thumbs.db
@@ -36,7 +45,15 @@ desktop.ini
 node_modules/
 dist/
 *.tsbuildinfo
+bun.lock
 
 # Tauri build artifacts
+MemoryCard/src-tauri/target/
 desktop-app/src-tauri/target/
 desktop-app/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

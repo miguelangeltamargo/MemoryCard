@@ -472,9 +472,7 @@ fn set_dock_visibility(app: tauri::AppHandle, visibility: String) -> Result<Stri
         if let Some(mtm) = MainThreadMarker::new() {
             let ns_app = NSApplication::sharedApplication(mtm);
             let ns_policy = match visibility.as_str() {
-                "menu-bar-only" | "neither" => {
-                    NSApplicationActivationPolicy::Accessory
-                }
+                "menu-bar-only" | "neither" => NSApplicationActivationPolicy::Accessory,
                 _ => NSApplicationActivationPolicy::Regular,
             };
             ns_app.setActivationPolicy(ns_policy);
