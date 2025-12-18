@@ -44,7 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzMDAwMDZBNEEyNDIyQzYKUldUR0lpUkthZ0FBazZ5YkgvQUNJZUxYZVhpRkltbEUvOTF6YjFVNkZXVXV4d2tlTThRekI2K3MK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCMUE3Nzc1MzlBOUQwRTUKUldUbDBLazVkWGNhVzIvcklKR3BSajkxSFZmT2NBamxDZGliRUZXb0dIRUNtU1lyZ0JQb2Z1Ni8K",
       "endpoints": [
         "https://github.com/miguelangeltamargo/MemoryCard/releases/latest/download/latest.json"
       ],
