@@ -329,7 +329,21 @@ function App() {
       }
     } catch (error) {
       console.error('Update check failed:', error);
-      setNotification({ message: 'Failed to check for updates', type: 'error' });
+      const errorMessage = String(error).toLowerCase();
+      // Check if the error indicates no update available (various ways Tauri might report this)
+      if (errorMessage.includes('up to date') ||
+          errorMessage.includes('no update') ||
+          errorMessage.includes('already running') ||
+          errorMessage.includes('current version')) {
+        setNotification({ message: 'You are running the latest version', type: 'success' });
+      } else if (errorMessage.includes('network') ||
+                 errorMessage.includes('fetch') ||
+                 errorMessage.includes('connection') ||
+                 errorMessage.includes('offline')) {
+        setNotification({ message: 'Could not connect to update server. Check your internet connection.', type: 'error' });
+      } else {
+        setNotification({ message: 'Failed to check for updates', type: 'error' });
+      }
     } finally {
       setCheckingForUpdates(false);
     }
@@ -1049,7 +1063,7 @@ function App() {
                     <div className="form-group update-section">
                       <label>Software Updates</label>
                       <div className="input-with-button">
-                        <span className="version-info">Current version: 0.5.0</span>
+                        <span className="version-info">Current version: 0.5.1</span>
                         <button
                           type="button"
                           className="btn btn-browse"
@@ -1268,7 +1282,7 @@ function App() {
             <div className="modal about-modal" onClick={(e) => e.stopPropagation()}>
               <div className="about-content">
                 <h1 className="about-title">MemoryCard</h1>
-                <p className="about-version">Version 0.5.0</p>
+                <p className="about-version">Version 0.5.1</p>
                 <p className="about-description">
                   Cross-platform game save synchronization
                 </p>

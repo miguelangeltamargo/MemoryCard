@@ -7,6 +7,7 @@ Cross-platform desktop app for syncing game saves between devices. Never lose yo
 ### What's New
 
 **Window & UI Improvements**
+
 - Custom overlay title bar with native macOS traffic lights
 - Window dragging via header area (using `data-tauri-drag-region`)
 - Simplified, cleaner settings with tabbed interface (General, Sync, Appearance)
@@ -14,24 +15,28 @@ Cross-platform desktop app for syncing game saves between devices. Never lose yo
 - 6 color themes: Default, Cream, Midnight, Violet, Sunset, Ember
 
 **Tray & Dock Integration**
+
 - System tray icon with left-click to toggle window visibility
 - Right-click tray menu: Show, Sync Now, Quit
 - macOS dock icon visibility toggle (show/hide from dock)
 - Instant dock visibility changes without restart
 
 **Game Management**
+
 - Browse for game application to auto-fill game name
 - "View" button to open save folder in Finder/Explorer
 - Compact remove button (X icon)
 - Simplified conflict resolution: Local or Cloud choice
 
 **Sync Features**
+
 - Automatic sync at configurable intervals
 - Cloud config sync (save settings to cloud folder)
 - Multiple conflict resolution strategies: Manual, Local, Cloud, Newer
 - Desktop notifications for sync events
 
 **Other Features**
+
 - Launch on login option
 - Open cloud provider app button
 - Switched to bun for faster package management
@@ -39,6 +44,7 @@ Cross-platform desktop app for syncing game saves between devices. Never lose yo
 ## Download
 
 **Coming Soon**: Download the latest release for your platform:
+
 - **macOS**: [MemoryCard.dmg](https://github.com/miguelangeltamargo/MemoryCard/releases) (Apple Silicon/Intel)
 - **Windows**: [MemoryCard-Setup.msi](https://github.com/miguelangeltamargo/MemoryCard/releases)
 
@@ -64,10 +70,12 @@ The app uses file modification times to determine which version is newest, ensur
 ### Prerequisites
 
 **macOS:**
+
 - Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - Node.js 20+ or Bun: `brew install oven-sh/bun/bun`
 
 **Windows:**
+
 - Rust: Download from [rustup.rs](https://rustup.rs/)
 - Node.js 20+: Download from [nodejs.org](https://nodejs.org/)
 
@@ -89,6 +97,7 @@ bun run tauri build
 ```
 
 **Build outputs:**
+
 - **macOS**: `src-tauri/target/release/bundle/macos/MemoryCard.app` and `.dmg`
 - **Windows**: `src-tauri/target/release/bundle/msi/MemoryCard_x64_en-US.msi`
 
@@ -114,10 +123,6 @@ MemoryCard/
 - **Package Manager**: Bun
 
 ## Supported Games
-
-Currently tested with:
-- Hollow Knight
-- Hollow Knight: Silksong
 
 **Any game works** - just point the app to the save folder location!
 
